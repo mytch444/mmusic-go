@@ -7,9 +7,9 @@ Try `mmusicd -h` for some options.
 
 When run it will create and populate the following directory (you can change
 the path with the `-t` option). If this already exists mmusicd will exit and
-give a warning (`-r` to delete first).
+give a warning.
 
-    /tmp/mmusic-$USER_ID
+    $tmp # defaults to /tmp/mmusic-$USER_ID
     	in
     	playlist # symbolic link or copy of playlist file?
     	upcoming
@@ -59,6 +59,11 @@ If mmusicd comes accross a line that begins with a '!' all files that
 match that path will be ignored. This is so you can for example add
 "/media/music" then add "!/media/music/Katy Perry" to exclude Katy Perry,
 not that I have anything against Katy Perry.
+
+In terms of playlist managment `mmusicd` doesn't really do anything. When
+you run it give playlist files as arguments and/or stdin (give `--`)
+ lines to it and it will write everything you give it to `$tmp/playlist`.
+You can add things to this as you go (the write `scan` to `$tmp/in`).
 
 Send SIGTERM to mmusicd to stop it.
 
