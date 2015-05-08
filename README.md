@@ -14,13 +14,13 @@ will exit and give a warning.
 
     $tmp                        # defaults to /tmp/mmusic-$USER_ID
 
-	in                      # fifo that listens that you can control
+        in                      # fifo that listens that you can control
                                   mmusic with.
 
-	playlist                # concatination of all playlist file files
+        playlist                # concatination of all playlist file files
                                   that were given.
 
-	upcoming                # add file paths (or uri's) and they
+        upcoming                # add file paths (or uri's) and they
                                   will be played next.
 
         playing                 # contains the uri currently playing.
@@ -92,7 +92,7 @@ as adding better playlist controls.
 
 It stores it's playlists in `$XDG_CONFIG/mmterm/`
 
-#lib/mmusic
+##lib/mmusic
 
 library that is used by `mmusic` and `mmterm` for common functions such
 as parsing playlist files and not much else. If you want to make your
@@ -100,7 +100,7 @@ own front end for whatever reason this could be helpful.
 
 #Notes
 
-##On the strange (src) directory structure.
+####On the strange (src) directory structure.
 
 I have no idea how to do anything in go, this build system is odd.
 Leave me alone.
