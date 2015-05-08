@@ -215,7 +215,7 @@ func playNext(p *Player) {
 func populateTmp(path string) {
 	_, err := os.Stat(path)
 	if err == nil { /* File exits? */
-		fmt.Println(path, "exists. Is mmusicd already running?")
+		fmt.Println(path, "exists. Is another instance already running? If you really want another set -t to something.")
 		os.Exit(1)
 	}
 	
@@ -299,7 +299,7 @@ func main () {
 	
 	p := new(Player)
 
-	p.snd = gst.ElementFactoryMake("playbin", "mmusicd")
+	p.snd = gst.ElementFactoryMake("playbin", "mmusic")
 	if p.snd == nil {
 		fmt.Println("Failed to initialize gst: snd")
 		os.Exit(1)
