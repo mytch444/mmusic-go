@@ -10,6 +10,10 @@ type Song struct {
 	Next *Song
 }
 
+/* Returns the first line found in data looking no further than
+ * n as well as the position of the next line (so you can os.Seek
+ * to it).
+ */
 func PopLine(data []byte, n int) (string, int) {
 	var i, le int
 	for i = 0; i < n; i++ {
@@ -25,7 +29,7 @@ func PopLine(data []byte, n int) (string, int) {
 
 func songInBad(bad *Song, song *Song) bool {
 	for bad = bad.Next; bad != nil; bad = bad.Next {
-		if (strings.Contains(song.Path, bad.Path)) {
+		if (strings.HasPrefix(song.Path, bad.Path)) {
 			return true
 		}
 	}
@@ -41,10 +45,12 @@ func fillAndClean(songs *Song, bad *Song) {
 		} else {
 			file, err := os.Open(s.Path)
 			if err != nil {
+				prev = s
 				continue
 			}
 			subs, err := file.Readdirnames(0)
 			if err != nil {
+				prev = s
 				continue
 			}
 			
@@ -55,18 +61,13 @@ func fillAndClean(songs *Song, bad *Song) {
 				t = t.Next
 				t.Path = s.Path + "/" + sub
 			}
-			t.Next = nil 
-			fillAndClean(s, bad)
 			t.Next = next
-
 			prev.Next = s.Next
 		}
-		
-		prev = s
 	}
 }
 
-func Scan(path string) (songs *Song, number int64, err error) {
+func Scan(path string) (songs *Song, err error) {
 	var seek int64 = 0
 	var n int
 	var s, b *Song
@@ -74,7 +75,7 @@ func Scan(path string) (songs *Song, number int64, err error) {
 	f, err := os.Open(path)
 	defer f.Close()
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 	
 	songs = new(Song)
@@ -111,10 +112,5 @@ func Scan(path string) (songs *Song, number int64, err error) {
 	
 	fillAndClean(songs, bad)
 	
-	number = 0
-	for s = songs.Next; s != nil; s = s.Next {
-		number++
-	}
-	
-	return songs, number, nil
+	return songs, nil
 }

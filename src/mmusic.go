@@ -7,9 +7,10 @@ import (
 	"io/ioutil"
 	"syscall"
 	"flag"
-	"github.com/ziutek/gst"
 	"strings"
 	"math/rand"
+	"sync"
+	"github.com/ziutek/gst"
 	"github.com/mytch444/mmusic"
 )
 
@@ -26,6 +27,8 @@ var codes = map[string](func(*Player)) {
 }
 
 type Player struct {
+	lock *sync.Mutex
+	
 	snd *gst.Element
 	bus *gst.Bus
 	
@@ -42,8 +45,6 @@ type Player struct {
 	
 	tmpDir string
 }
-
-/* helper functions */
 
 func writeStringToPath(path string, s string) {
 	os.Remove(path)
@@ -78,15 +79,22 @@ func makeURI(str string) string {
 	}
 }
 
-/* user functions */
-
 func scan(p *Player) {
+	p.lock.Lock()
+		
 	var err error
-	p.songs, p.size, err = mmusic.Scan(p.tmpDir + "/playlist")
+	p.songs, err = mmusic.Scan(p.tmpDir + "/playlist")
 	if err != nil {
 		fmt.Println("Failed to scan", p.tmpDir + "/playlist", err)
 		os.Exit(1)
 	}
+	
+	p.size = 0
+	for s := p.songs.Next; s != nil; s = s.Next {
+		p.size++
+	}
+	
+	p.lock.Unlock()
 }
 
 func setRandom(p *Player) {
@@ -241,7 +249,6 @@ func listenFifo(p *Player) {
 			os.Exit(1)
 		}
 
-		defer in.Close()
 		n, err := in.Read(data)
 		if n > 0 && err != nil {
 			fmt.Println(err)
@@ -252,9 +259,12 @@ func listenFifo(p *Player) {
 		for _, name := range strings.Fields(str) {
 			code := codes[name]
 			if code != nil {
+				p.lock.Lock()
 				code(p)
+				p.lock.Unlock()
 			}
 		}
+		in.Close()
 	}
 }
 
@@ -264,12 +274,17 @@ func listenBus(p *Player) {
 		if mesg != nil {
 			switch mesg.GetType() {
 			case gst.MESSAGE_EOS:
+				p.lock.Lock()
 				playNext(p)
+				p.lock.Unlock()
 			case gst.MESSAGE_ERROR:
+				fmt.Println("Have error!")
+				/*
 				err, debug := mesg.ParseError()
 				fmt.Printf("GST ERROR: %s (debug: %s)\n", err, debug)
 				os.RemoveAll(p.tmpDir)
 				os.Exit(1)
+				*/
 			}
 		}
 	}
@@ -322,10 +337,7 @@ func main () {
 	p.tmpDir = *tmpDir
 	p.volume = float64(*volume) / 100
 	p.random = *random
-	
-	if p.random {
-		os.Create(p.tmpDir + "/state/israndom")
-	}
+	p.lock = new(sync.Mutex)
 	
 	file, err := os.Create(p.tmpDir + "/playlist")
 	if err != nil {
@@ -356,10 +368,14 @@ func main () {
 	file.Close()
 	
 	updateVolume(p)
+	if p.random {
+		os.Create(p.tmpDir + "/state/israndom")
+	}
+	
 	scan(p)
+	playNext(p)
 	
 	go listenFifo(p)
-	playNext(p)
 	go listenBus(p)
 	
 	/* Wait for SIGTERM/INT signal */
