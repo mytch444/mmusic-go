@@ -59,6 +59,10 @@ func writeStringToPath(path string, s string) {
  * http://keyj.emphy.de/balanced-shuffle/
  */
 func randomSong(p *Player) *mmusic.Song {
+	if p.size == 0 {
+		return nil
+	}
+	
 	n := rand.Int63n(p.size)
 	s := p.songs.Next
 	for i := int64(0); i < n && s != nil ; i++ {
@@ -188,16 +192,16 @@ func playNext(p *Player) {
 	path = popUpcoming(p)
 	
 	if path == "" {
-		if p.random && p.size > 0 {
+		if p.random {
 			p.current = randomSong(p)
 		} else {
 			if p.current != nil {
 				p.current = p.current.Next
 			} else {
 				p.current = p.songs.Next
-			}
-			if p.current == nil {
-				p.current = p.songs.Next
+				if p.current == nil {
+					p.current = p.songs.Next
+				}
 			}
 		}
 		
