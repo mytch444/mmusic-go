@@ -10,6 +10,7 @@ import (
 	"github.com/ziutek/gst"
 	"strings"
 	"math/rand"
+	"github.com/mytch444/mmusic"
 )
 
 var codes = map[string](func(*Player)) {
@@ -24,19 +25,14 @@ var codes = map[string](func(*Player)) {
 	"mute": muteVolume,
 }
 
-type Song struct {
-	path string
-	next *Song
-}
-
 type Player struct {
 	snd *gst.Element
 	bus *gst.Bus
 	
 	size int64 /* for convinience */
-	songs *Song
+	songs *mmusic.Song
 	
-	current *Song
+	current *mmusic.Song
 
 	volume float64
 	random bool
@@ -61,26 +57,13 @@ func writeStringToPath(path string, s string) {
 /* TODO: improve this so it's not so random.
  * http://keyj.emphy.de/balanced-shuffle/
  */
-func randomSong(p *Player) *Song {
+func randomSong(p *Player) *mmusic.Song {
 	n := rand.Int63n(p.size)
-	s := p.songs.next
+	s := p.songs.Next
 	for i := int64(0); i < n && s != nil ; i++ {
-		s = s.next
+		s = s.Next
 	}
 	return s
-}
-
-func popLine(data []byte, n int) (string, int) {
-	var i, le int
-	for i = 0; i < n; i++ {
-		if (data[i] == '\n') {
-			break
-		} else {
-			le++
-		}
-	}
-	
-	return string(data[:le]), le + 1
 }
 
 func makeURI(str string) string {
@@ -98,63 +81,12 @@ func makeURI(str string) string {
 /* user functions */
 
 func scan(p *Player) {
-	var seek int64 = 0
-	var n int
-	var s *Song
-	
-	fmt.Println("Scanning")
-	f, err := os.Open(p.tmpDir + "/playlist")
-	defer f.Close()
+	var err error
+	p.songs, p.size, err = mmusic.Scan(p.tmpDir + "/playlist")
 	if err != nil {
-		fmt.Println(err)
+		fmt.Println("Failed to scan", p.tmpDir + "/playlist", err)
 		os.Exit(1)
 	}
-	
-	p.size = 0
-	p.songs = new(Song)
-	p.songs.next = nil
-	s = p.songs
-	
-	bad := new(Song)
-	bad.next = nil
-	
-	data := make([]byte, 2048)
-	err = nil
-
-	for ; ; {
-		n, err = f.Read(data)
-		if err != nil || n == 0 {
-			break
-		}
-		
-		line, le := popLine(data, n)
-		
-		seek = int64(le - n)
-		if seek >= 0 {
-			break
-		}
-		f.Seek(seek, 1)
-		
-		if line[0] == '!' {
-			bad.next = new(Song)
-			bad = bad.next
-			bad.path = line
-			bad.next = nil
-		} else {
-			p.size++
-			s.next = new(Song)
-			s = s.next
-			s.path = line
-			s.next = nil
-		}
-	}
-	
-	/* TODO: go through bad and remove all matchs in p.songs 
-	 * actually, no.
-	 * go through p.songs and check if it matches a bad, remove
-	 * if it does, otherwise check if it is a dir, if it is 
-	 * remove it and find all files in it.
-	 */
 }
 
 func setRandom(p *Player) {
@@ -222,7 +154,7 @@ func popUpcoming(p *Player) string {
 	
 	tmpFile, err := os.Create(p.tmpDir + "/.upcoming.tmp")
 	
-	ret, le := popLine(data, n)
+	ret, le := mmusic.PopLine(data, n)
 	tmpFile.Write(data[le:n])
 	for ; ; {
 		n, err := upcomingFile.Read(data)
@@ -252,12 +184,12 @@ func playNext(p *Player) {
 			p.current = randomSong(p)
 		} else {
 			if p.current != nil {
-				p.current = p.current.next
+				p.current = p.current.Next
 			} else {
-				p.current = p.songs.next
+				p.current = p.songs.Next
 			}
 			if p.current == nil {
-				p.current = p.songs.next
+				p.current = p.songs.Next
 			}
 		}
 		
@@ -266,38 +198,24 @@ func playNext(p *Player) {
 			return
 		}
 		
-		path = p.current.path
+		path = p.current.Path
 	} else {
 		p.current = nil
 	}
 	
-	fmt.Println("playing", makeURI(path))
-	
-	p.snd.SetProperty("uri", makeURI(path))
+	uri := makeURI(path)
+	p.snd.SetProperty("uri", uri)
 	p.snd.SetState(gst.STATE_PLAYING)
 
-	writeStringToPath(p.tmpDir + "/state/playing", path + "\n")
+	writeStringToPath(p.tmpDir + "/state/playing", uri + "\n")
 }
 
 /* init functions */
 
-/* NOT WORKING */
-func (p *Player) onMessage(bus *gst.Bus, msg *gst.Message) {
-	fmt.Println("Got a message from bus")
-	switch msg.GetType() {
-	case gst.MESSAGE_EOS:
-		playNext(p)
-	case gst.MESSAGE_ERROR:
-		err, debug := msg.ParseError()
-		fmt.Printf("GST ERROR: %s (debug: %s)\n", err, debug)
-		os.Exit(1)
-	}
-}
-
 func populateTmp(path string) {
 	_, err := os.Stat(path)
 	if err == nil { /* File exits? */
-		fmt.Println(path, "exits. Is mmusicd already running?")
+		fmt.Println(path, "exists. Is mmusicd already running?")
 		os.Exit(1)
 	}
 	
@@ -340,6 +258,23 @@ func listenFifo(p *Player) {
 	}
 }
 
+func listenBus(p *Player) {
+	for ; ; {
+		mesg := p.bus.TimedPop(100000000)
+		if mesg != nil {
+			switch mesg.GetType() {
+			case gst.MESSAGE_EOS:
+				playNext(p)
+			case gst.MESSAGE_ERROR:
+				err, debug := mesg.ParseError()
+				fmt.Printf("GST ERROR: %s (debug: %s)\n", err, debug)
+				os.RemoveAll(p.tmpDir)
+				os.Exit(1)
+			}
+		}
+	}
+}
+
 func main () {
 	var tmpDir *string
 	var nsink *string
@@ -365,19 +300,23 @@ func main () {
 	p := new(Player)
 
 	p.snd = gst.ElementFactoryMake("playbin", "mmusicd")
-	if (p.snd == nil) {
+	if p.snd == nil {
 		fmt.Println("Failed to initialize gst: snd")
 		os.Exit(1)
 	}
 	
 	sink := gst.ElementFactoryMake(*nsink, "Sink")
-	if (sink == nil) {
+	if sink == nil {
 		fmt.Println("Failed to initilize gst: ", *nsink)
 		os.Exit(1)
 	}
-	
 	p.snd.Link(sink)
 	
+	p.bus = p.snd.GetBus()
+	if p.bus == nil {
+		fmt.Println("Failed to open gstreamer bus!")
+		os.Exit(1)
+	}
 	populateTmp(*tmpDir)
 	
 	p.tmpDir = *tmpDir
@@ -388,11 +327,6 @@ func main () {
 		os.Create(p.tmpDir + "/state/israndom")
 	}
 	
-	p.bus = p.snd.GetBus()
-	p.bus.AddSignalWatch()
-	p.bus.Connect("message", (*Player).onMessage, p)
-	p.bus.EnableSyncMessageEmission()
-	
 	file, err := os.Create(p.tmpDir + "/playlist")
 	if err != nil {
 		fmt.Println(err)
@@ -401,7 +335,6 @@ func main () {
 	}
 	
 	if *readstdin {
-		fmt.Println("Adding stdin")
 		data := make([]byte, 512)
 		for ; ; {
 			n, err := os.Stdin.Read(data)
@@ -412,9 +345,7 @@ func main () {
 		}
 	}
 
-	fmt.Println("reading playlists")
 	for _, name := range flag.Args() {
-		fmt.Println("Adding playlist", name)
 		bs, err := ioutil.ReadFile(name)
 		if err != nil {
 			fmt.Println(err)
@@ -424,13 +355,12 @@ func main () {
 	}
 	file.Close()
 	
-	fmt.Println("Starting  mmusicd")
-	
 	updateVolume(p)
 	scan(p)
 	
 	go listenFifo(p)
 	playNext(p)
+	go listenBus(p)
 	
 	/* Wait for SIGTERM/INT signal */
 	_ = <-sigChan

@@ -1,30 +1,35 @@
-#mmusicd
+#src/mmusic
 
-Music managment daemon. Takes a playlist file (described later) as an argument
-or from stdin. It uses gstreamer.
+Music managment daemon written in go, it uses gstreamer.
 
-Try `mmusicd -h` for some options.
+Try `mmusic -h` for some options.
 
-When run it will create and populate the following directory (you can change
-the path with the `-t` option). If this already exists mmusicd will exit and
-give a warning.
+To set what songs `mmusic` plays add filenames of playlist files (explaned further down) as arguments and/or to stdin. And no, `mmusic` does not fork to the background if you want that do it with your shell.
+
+When run it will create and populate the following directory (you can change the path with the `-t` option). If this already exists `mmusic` will exit and give a warning.
 
     $tmp # defaults to /tmp/mmusic-$USER_ID
-    	in
-    	playlist # symbolic link or copy of playlist file?
-    	upcoming
-    	state # change the values of these files will not change the daemon
-    	        state as cool as that would be. Maybe latter on.
 
-		ispaused 	# if this file exists, playback is paused.
+    	in			# fifo that listens that you can control
+    				  mmusic with.
+
+    	playlist		# concatination of all playlist file files
+    				  that were given.
+
+    	upcoming		# add file paths (or uri's) and they will be
+    				  played next.
+
+    	state			# change the values of these files will not
+    				  change the daemon state as cool as that would
+    				  be. Maybe latter on.
+
+		ispaused 	# if this file exists, playback has been paused.
+
     		israndom	# same as above but for randomness.
-    		playing		# contains the path to the current
-    				  playing file.
-    		volume		# contains the volume level.
 
-Reads upcoming file to find if there is anything it should play, else
-depending on mode selects a random song or the next alphanumericaly in
-it's library.
+    		playing		# contains the uri currently playing.
+
+    		volume		# contains the volume percentage.
 
 The `in` fifo will listen for the following commands.
 
@@ -47,42 +52,35 @@ The `in` fifo will listen for the following commands.
 
     mute		# set volume to 0%
 
-Note: There seems to be some problems with the fifo. Don't write 
-things to it too quickly. ie: if you do a loop in bash put a delay
-of a few milliseconds in between each iteration.
+Once the current stream ends or you write `next` to `in` `mmusic` will reads the upcoming file to find if there is anything it should play, if upcoming is empty depending on mode selects a random song or the next alphanumericaly in it's library.
 
-In playlist files you can list paths to directories or files. When
-mmusicd scans the playlist lines that are directories will be searched
-and any music files (and subdirs) will be added to the library.
+In playlist files you can list uri's or paths (absolute or relative) to directories or files. When `mmusic` scans the playlist lines that are directories will be searched and any music files (and subdirs) will be added to the library.
 
-If mmusicd comes accross a line that begins with a '!' all files that
-match that path will be ignored. This is so you can for example add
-"/media/music" then add "!/media/music/Katy Perry" to exclude Katy Perry,
-not that I have anything against Katy Perry.
+If `mmusic` comes accross a line that begins with a '!' all files that begin with the remainder of the line will be ignored. This is so you can for example add "/media/music" then add "!/media/music/Katy Perry" to exclude Katy Perry, not that I have anything against Katy Perry.
 
-In terms of playlist managment `mmusicd` doesn't really do anything. When
-you run it give playlist files as arguments and/or stdin (give `--`)
- lines to it and it will write everything you give it to `$tmp/playlist`.
-You can add things to this as you go (the write `scan` to `$tmp/in`).
+In terms of playlist managment `mmusic` doesn't really do anything. When you run it give playlist files as arguments and/or stdin (give `--`) lines to it and it will write everything you give it to `$tmp/playlist`. You can add things to this as you go (the write `scan` to `$tmp/in`).
 
-Send SIGTERM to mmusicd to stop it.
+Send SIGTERM to `mmusic` to stop it.
 
-Works with any sort of files gstreamer can play (so it should be able
-to play network streams, can't confirm yet).
+Works with any sort of files gstreamer can play (so it should be able to play network streams, can't confirm yet).
 
-Note; Do not need the ability to play a certain file as the user can
-add said file to `upcoming` then `next` to play it.
+##Notes
+
+Do not need the ability to play a certain file as the user can add said file to `upcoming` then `next` to play it.
+
+Note: There seems to be some problems with the fifo. Don't write things to it too quickly. ie: if you do a loop in bash put a delay of a few milliseconds in between each iteration.
+
+#src/mmterm
+
+Note: Not yet implimented.
+
+A termbox-go controller for `mmusic`. From it you can choose playlists, manage their contents, select songs to play, add to upcoming (start and end), toggle random, pause, change volume and view what is playing.
+
+In otherwords, an interface that makes everything easier to see as well as adding better playlist controls.
+
+It stores it's playlists in `$XDG_CONFIG/mmterm/`
 
 #mmusic
 
-mmusic library that is used by mmusicd and `insert controller name`
-for common functions such as parsing playlist files and not much
-else.
+library that is used by `mmusic` and `mmterm` for common functions such as parsing playlist files and not much else. If you want to make your own front end for whatever reason this could be helpful.
 
-#`insert controller name`
-
-A termbox-go controller for mmusicd. From it you can choose playlists,
-manage their contents, select songs to play, add to upcoming (start and
-end), toggle random, pause, change volume and view what is playing.
-
-In otherwords, an interface that makes everything easier to see.
