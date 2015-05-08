@@ -5,20 +5,20 @@ import (
 	"os"
 	"os/signal"
 	"io/ioutil"
+	"sync"
 	"syscall"
 	"flag"
 	"strings"
 	"math/rand"
-	"sync"
 	"github.com/ziutek/gst"
-	"github.com/mytch444/mmusic"
+	"github.com/mytch444/mmusic/lib"
 )
 
 var codes = map[string](func(*Player)) {
 	"next": playNext,
 	"scan": scan,
-	"random": setRandom,
-	"normal": setNormal,
+	"random": random,
+	"normal": normal,
 	"pause": pause,
 	"resume": resume,
 	"increase": increaseVolume,
@@ -47,7 +47,6 @@ type Player struct {
 }
 
 func writeStringToPath(path string, s string) {
-	os.Remove(path)
 	file, err := os.Create(path)
 	if err == nil {
 		file.WriteString(s)
@@ -84,41 +83,42 @@ func makeURI(str string) string {
 }
 
 func scan(p *Player) {
-	p.lock.Lock()
-		
 	var err error
-	p.songs, err = mmusic.Scan(p.tmpDir + "/playlist")
+	p.songs, err = mmusic.Scan(p.tmpDir + mmusic.SuffixPlaylist)
 	if err != nil {
-		fmt.Println("Failed to scan", p.tmpDir + "/playlist", err)
-		os.Exit(1)
+		panic(err)
 	}
 	
 	p.size = 0
 	for s := p.songs.Next; s != nil; s = s.Next {
 		p.size++
 	}
-	
-	p.lock.Unlock()
 }
 
-func setRandom(p *Player) {
+func random(p *Player) {
 	p.random = true
-	os.Create(p.tmpDir + "/state/israndom")
+	f, err := os.Create(p.tmpDir + mmusic.SuffixIsrandom)
+	if err == nil {
+		f.Close()
+	}
 }
 
-func setNormal(p *Player) {
+func normal(p *Player) {
 	p.random = false
-	os.Remove(p.tmpDir + "/state/israndom")
+	os.Remove(p.tmpDir + mmusic.SuffixIsrandom)
 }
 
 func pause(p *Player) {
 	p.snd.SetState(gst.STATE_PAUSED)
-	os.Create(p.tmpDir + "/state/ispaused")
+	f, err := os.Create(p.tmpDir + mmusic.SuffixIspaused)
+	if err == nil {
+		f.Close()
+	}
 }
 
 func resume(p *Player) {
 	p.snd.SetState(gst.STATE_PLAYING)
-	os.Remove(p.tmpDir + "/state/ispaused")
+	os.Remove(p.tmpDir + mmusic.SuffixIspaused)
 }
 
 func increaseVolume(p *Player) {
@@ -145,22 +145,23 @@ func updateVolume(p *Player) {
 
 	p.snd.SetProperty("volume", p.volume)
 	
-	writeStringToPath(p.tmpDir + "/state/volume",
+	writeStringToPath(p.tmpDir + mmusic.SuffixVolume,
 		fmt.Sprintf("%d\n", int(p.volume * 100)))
 }
 
 func popUpcoming(p *Player) string {
 	var data []byte = make([]byte, 2048)
 	
-	upcomingFile, err := os.Open(p.tmpDir + "/upcoming")
+	upcomingFile, err := os.Open(p.tmpDir + mmusic.SuffixUpcoming)
 	if err != nil {
 		fmt.Println(err)
 		return ""
 	}
-	
+
 	/* hopefully 2048 is enough bytes for the first line */
 	n, err := upcomingFile.Read(data)
 	if err != nil {
+		upcomingFile.Close()
 		return ""
 	}
 	
@@ -168,7 +169,7 @@ func popUpcoming(p *Player) string {
 	
 	ret, le := mmusic.PopLine(data, n)
 	tmpFile.Write(data[le:n])
-	for ; ; {
+	for {
 		n, err := upcomingFile.Read(data)
 		if err != nil {
 			break
@@ -179,8 +180,8 @@ func popUpcoming(p *Player) string {
 	
 	upcomingFile.Close()
 	tmpFile.Close()
-	os.Remove(p.tmpDir + "/upcoming")
-	os.Rename(p.tmpDir + "/.upcoming.tmp", p.tmpDir + "/upcoming")
+	os.Remove(p.tmpDir + mmusic.SuffixUpcoming)
+	os.Rename(p.tmpDir + "/.upcoming.tmp", p.tmpDir + mmusic.SuffixUpcoming)
 	return ret
 }
 
@@ -219,44 +220,44 @@ func playNext(p *Player) {
 	p.snd.SetProperty("uri", uri)
 	p.snd.SetState(gst.STATE_PLAYING)
 
-	writeStringToPath(p.tmpDir + "/state/playing", uri + "\n")
+	os.Remove(p.tmpDir + mmusic.SuffixIspaused)
+	writeStringToPath(p.tmpDir + mmusic.SuffixPlaying, uri + "\n")
 }
 
 /* init functions */
 
 func populateTmp(path string) {
+	var f *os.File
 	_, err := os.Stat(path)
 	if err == nil { /* File exits? */
 		fmt.Println(path, "exists. Is another instance already running? If you really want another set -t to something.")
 		os.Exit(1)
 	}
 	
-	/*
-	 * Just going to ignore everything.
-	 * There really shouldn't be any errors.
-	 */
+	/* Just hope there are no errors. */
 	os.Mkdir(path, 0700)
-	os.Mkdir(path + "/state", 0700)
-	syscall.Mkfifo(path + "/in", 0700)
-	os.Create(path + "/upcoming")
-	os.Create(path + "/state/playing")
-	os.Create(path + "/state/volume")
+	syscall.Mkfifo(path + mmusic.SuffixIn, 0700)
+	
+	f, _ = os.Create(path + mmusic.SuffixUpcoming)
+	f.Close()
+	f, _ = os.Create(path + mmusic.SuffixPlaying)
+	f.Close()
+	f, _ = os.Create(path + mmusic.SuffixVolume)
+	f.Close()
 }
 
 func listenFifo(p *Player) {
 	var data = make([]byte, 512)
 
-	for ; ; {
-		in, err := os.Open(p.tmpDir + "/in")
+	for {
+		in, err := os.Open(p.tmpDir + mmusic.SuffixIn)
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			panic(err)
 		}
 
 		n, err := in.Read(data)
 		if n > 0 && err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			panic(err)
 		}
 		
 		str := string(data[:n])
@@ -273,22 +274,15 @@ func listenFifo(p *Player) {
 }
 
 func listenBus(p *Player) {
-	for ; ; {
+	for {
 		mesg := p.bus.TimedPop(100000000)
 		if mesg != nil {
-			switch mesg.GetType() {
-			case gst.MESSAGE_EOS:
+			t := mesg.GetType()
+			if t == gst.MESSAGE_EOS || t == gst.MESSAGE_ERROR {
+			 /* best to just move on with life. */
 				p.lock.Lock()
 				playNext(p)
 				p.lock.Unlock()
-			case gst.MESSAGE_ERROR:
-				fmt.Println("Have error!")
-				/*
-				err, debug := mesg.ParseError()
-				fmt.Printf("GST ERROR: %s (debug: %s)\n", err, debug)
-				os.RemoveAll(p.tmpDir)
-				os.Exit(1)
-				*/
 			}
 		}
 	}
@@ -343,16 +337,14 @@ func main () {
 	p.random = *random
 	p.lock = new(sync.Mutex)
 	
-	file, err := os.Create(p.tmpDir + "/playlist")
+	file, err := os.Create(p.tmpDir + mmusic.SuffixPlaylist)
 	if err != nil {
-		fmt.Println(err)
-		os.RemoveAll(p.tmpDir)
-		os.Exit(1)
+		panic(err)
 	}
 	
 	if *readstdin {
 		data := make([]byte, 512)
-		for ; ; {
+		for {
 			n, err := os.Stdin.Read(data)
 			if err != nil {
 				break
@@ -373,7 +365,11 @@ func main () {
 	
 	updateVolume(p)
 	if p.random {
-		os.Create(p.tmpDir + "/state/israndom")
+		file, err = os.Create(p.tmpDir + mmusic.SuffixIsrandom)
+		if err == nil {
+			file.Close()
+		}
+		
 	}
 	
 	scan(p)

@@ -5,9 +5,18 @@ import (
 	"strings"
 )
 
+var SuffixIn string         = "/in"
+var SuffixPlaylist string   = "/playlist"
+var SuffixUpcoming string   = "/upcoming"
+var SuffixVolume string     = "/volume"
+var SuffixPlaying string    = "/playing"
+var SuffixIsrandom string   = "/israndom"
+var SuffixIspaused string   = "/ispaused"
+
 type Song struct {
 	Path string
 	Next *Song
+	Prev *Song
 }
 
 /* Returns the first line found in data looking no further than
@@ -43,15 +52,22 @@ func fillAndClean(songs *Song, bad *Song) {
 		if (songInBad(bad, s)) {
 			prev.Next = s.Next
 		} else {
-			file, err := os.Open(s.Path)
-			if err != nil {
+			fi, err := os.Stat(s.Path)
+			if err != nil || !fi.IsDir() {
 				prev = s
 				continue
 			}
-			subs, err := file.Readdirnames(0)
+			
+			file, err := os.Open(s.Path)
 			if err != nil {
 				prev = s
+				file.Close()
 				continue
+			}
+			
+			subs, err := file.Readdirnames(0)
+			if err != nil {
+				panic(err)
 			}
 			
 			next = s.Next
@@ -63,6 +79,7 @@ func fillAndClean(songs *Song, bad *Song) {
 			}
 			t.Next = next
 			prev.Next = s.Next
+			file.Close()
 		}
 	}
 }
@@ -73,10 +90,10 @@ func Scan(path string) (songs *Song, err error) {
 	var s, b *Song
 	
 	f, err := os.Open(path)
-	defer f.Close()
 	if err != nil {
 		return nil, err
 	}
+	defer f.Close()
 	
 	songs = new(Song)
 	s = songs
@@ -88,7 +105,7 @@ func Scan(path string) (songs *Song, err error) {
 	data := make([]byte, 2048)
 	err = nil
 
-	for ; ; {
+	for {
 		n, err = f.Read(data)
 		if err != nil || n == 0 {
 			break
@@ -111,6 +128,12 @@ func Scan(path string) (songs *Song, err error) {
 	}
 	
 	fillAndClean(songs, bad)
+	
+	p := songs
+	for s := songs.Next; s != nil; s = s.Next {
+		s.Prev = p
+		p = s
+	}
 	
 	return songs, nil
 }
