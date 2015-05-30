@@ -6,10 +6,26 @@ import (
 	"flag"
 	"sync"
 	"time"
+	"strings"
 	"io/ioutil"
+	"unicode/utf8"
+	"regexp"
 	"github.com/nsf/termbox-go"
-	"github.com/mytch444/mmusic/lib"
 )
+
+var SuffixIn string       = "/in"
+var SuffixPlaylist string = "/playlist"
+var SuffixUpcoming string = "/upcoming"
+var SuffixVolume string   = "/volume"
+var SuffixPlaying string  = "/playing"
+var SuffixIsRandom string = "/israndom"
+var SuffixIsPaused string = "/ispaused"
+
+type Line struct {
+	Value string
+	Prev *Line
+	Next *Line
+}
 
 var ctrlKeys = map[termbox.Key](func()) {
 	termbox.KeyEnter: playCursor,
@@ -44,6 +60,7 @@ var normKeys = map[rune](func()) {
 	'k': movePrev,
 	'g': gotoTop,
 	'G': gotoBottom,
+	's': gotoPlaying,
 	'+': increaseVolume,
 	'-': decreaseVolume,
 }
@@ -53,9 +70,36 @@ var tmp string
 
 var width, height, bottom int
 
-var songs *mmusic.Song
-var cursor *mmusic.Song
+var gettingInput bool
+var input []byte
+var inputPrefix string
+var inputCursor int
+var inputFinish (func())
+
+var searchingForward bool
+var searchReg *regexp.Regexp
+
+var lines *Line
+var cursor *Line
 var fromTop int
+
+func getPlaying() string {
+	f, err := os.Open(tmp + SuffixPlaying)
+	if err != nil {
+		termbox.Close()
+		panic(err)
+	}
+	defer f.Close()
+	
+	data := make([]byte, 2048)
+	n, err := f.Read(data)
+	
+	if n == 0 {
+		return ""
+	}
+	
+	return string(data[:n-1])
+}
 
 func exit() {
 	termbox.Close()
@@ -68,14 +112,14 @@ func playCursor() {
 }
 
 func addUpcoming() {
-	upcoming, err := os.OpenFile(tmp + mmusic.SuffixUpcoming, os.O_WRONLY, 0666)
+	upcoming, err := os.OpenFile(tmp + SuffixUpcoming, os.O_WRONLY, 0666)
 	if err != nil {
 		termbox.Close()
 		panic(err)
 	}
 	
 	upcoming.Seek(0, 2)
-	upcoming.Write([]byte(cursor.Path + "\n"))
+	upcoming.Write([]byte(cursor.Value + "\n"))
 	upcoming.Close()
 	
 	moveNext()
@@ -89,9 +133,9 @@ func addTopUpcoming() {
 	}
 	
 	tmpName := f.Name()
-	f.Write([]byte(cursor.Path + "\n"))
+	f.Write([]byte(cursor.Value + "\n"))
 	
-	upcomingData, err := ioutil.ReadFile(tmp + mmusic.SuffixUpcoming)
+	upcomingData, err := ioutil.ReadFile(tmp + SuffixUpcoming)
 	if err != nil {
 		termbox.Close()
 		panic(err)
@@ -99,7 +143,7 @@ func addTopUpcoming() {
 	
 	f.Write(upcomingData)
 	f.Close()
-	os.Rename(tmpName, tmp + mmusic.SuffixUpcoming)
+	os.Rename(tmpName, tmp + SuffixUpcoming)
 	
 	moveNext()
 }
@@ -109,7 +153,7 @@ func next() {
 }
 
 func togglePause() {
-	_, err := os.Stat(tmp + mmusic.SuffixIspaused)
+	_, err := os.Stat(tmp + SuffixIsPaused)
 	if err == nil {
 		writeToIn("resume")
 	} else {
@@ -118,7 +162,7 @@ func togglePause() {
 }
 
 func toggleRandom() {
-	_, err := os.Stat(tmp + mmusic.SuffixIsrandom)
+	_, err := os.Stat(tmp + SuffixIsRandom)
 	if err == nil {
 		writeToIn("normal")
 	} else {
@@ -134,20 +178,57 @@ func decreaseVolume() {
 	writeToIn("decrease")
 }
 
-func searchForward() {
+func search() {
+	var err error
+	var i int
+	for i = 0; i < len(input); i++ {
+		if input[i] == 0 {
+			break
+		}
+	}
 	
+	searchReg, err = regexp.Compile(string(input[:i]))
+	if err != nil {
+		panic(err)
+	}
+	
+	searchNext()
+}
+
+func searchForward() {
+	searchingForward = true
+	getInput("/", search)
 }
 
 func searchBackward() {
-
+	searchingForward = false
+	getInput("?", search)
 }
 
 func searchNext() {
-
+	var l *Line
+	if searchReg == nil {
+		return
+	}
+	
+	l = cursor
+	for l != nil {
+		if searchingForward {
+			l = l.Next
+		} else {
+			l = l.Prev
+		}
+	
+		if l != nil && searchReg.MatchString(l.Value) {
+			cursor = l
+			fromTop = bottom / 2
+			break
+		}
+	}
 }
 
 func searchNextInverse() {
-
+	
 }
 
 func viewPlaylists() {
@@ -169,31 +250,43 @@ func moveNext() {
 	
 	fromTop++
 	if fromTop >= bottom {
-		fromTop = 0
+		fromTop = bottom / 2
 	}
 	cursor = cursor.Next
 }
 
 func movePrev() {
-	if cursor.Prev == songs {
+	if cursor.Prev == nil {
 		return
 	}
 	
 	fromTop--
 	if fromTop < 0 {
-		fromTop = bottom - 1
+		fromTop = bottom / 2
 	}
 	cursor = cursor.Prev
 }
 
 func gotoTop() {
 	fromTop = 0
-	cursor = songs.Next
+	cursor = lines
 }
 
 func gotoBottom() {
 	fromTop = bottom - 1
-	for cursor = songs.Next; cursor.Next != nil; cursor = cursor.Next {}
+	for cursor = lines; cursor.Next != nil; cursor = cursor.Next {}
+}
+
+func gotoPlaying() {
+	playing := getPlaying()
+	
+	for l := lines; l != nil; l = l.Next {
+		if strings.HasSuffix(playing, l.Value) {
+			fromTop = bottom / 2
+			cursor = l
+			break
+		}
+	}
 }
 
 func pageDown() {
@@ -208,7 +301,7 @@ func pageDown() {
 
 func pageUp() {
 	i := 0
-	for ; cursor.Prev != songs && i < bottom; cursor = cursor.Prev {
+	for ; cursor.Prev != nil && i < bottom; cursor = cursor.Prev {
 		i++
 	}
 	if i < bottom {
@@ -217,7 +310,7 @@ func pageUp() {
 }
 
 func writeToIn(code string) {
-	in, err := os.OpenFile(tmp + mmusic.SuffixIn, os.O_WRONLY, os.ModeNamedPipe)
+	in, err := os.OpenFile(tmp + SuffixIn, os.O_WRONLY, os.ModeNamedPipe)
 	if err != nil {
 		termbox.Close()
 		panic(err)
@@ -244,34 +337,22 @@ func drawBar() {
 		termbox.SetCell(i, bottom, ' ', fg, bg)
 	}
 	
-	f, err = os.Open(tmp + mmusic.SuffixIspaused)
+	f, err = os.Open(tmp + SuffixIsPaused)
 	if err == nil {
 		termbox.SetCell(1, bottom, 'P', fg, bg)
 		f.Close()
 	}
 		
-	f, err = os.Open(tmp + mmusic.SuffixIsrandom)
+	f, err = os.Open(tmp + SuffixIsRandom)
 	if err == nil {
 		termbox.SetCell(0, bottom, 'R', fg, bg)
 		f.Close()
 	}
 	
-	f, err = os.Open(tmp + mmusic.SuffixPlaying)
-	if err != nil {
-		termbox.Close()
-		panic(err)
-	}
-	
-	n, err = f.Read(data)
-	
-	if n > 0 {
-		playing := string(data[:n-1])
-		putString(playing, 4, bottom, fg, bg)
-	}
-	
-	f.Close()
+	playing := getPlaying()
+	putString(playing, 4, bottom, fg, bg)
 		
-	f, err = os.Open(tmp + mmusic.SuffixVolume)
+	f, err = os.Open(tmp + SuffixVolume)
 	if err != nil {
 		termbox.Close()
 		panic(err)
@@ -296,19 +377,155 @@ func drawMain() {
 	fg := termbox.ColorBlack
 	bg := termbox.ColorWhite
 	
-	y = fromTop-1
+	y = fromTop - 1
 	for s := cursor.Prev; s != nil && y >= 0; s = s.Prev {
-		putString(s.Path, 0, y, fg, bg)
+		putString(s.Value, 0, y, fg, bg)
 		y--
 	}
 	
-	putString(cursor.Path, 0, fromTop, termbox.ColorWhite, termbox.ColorBlack)
+	putString(cursor.Value, 0, fromTop, termbox.ColorWhite, termbox.ColorBlack)
 	
 	y = fromTop+1
 	for s := cursor.Next; s != nil && y < bottom; s = s.Next {
-		putString(s.Path, 0, y, fg, bg)
+		putString(s.Value, 0, y, fg, bg)
 		y++
 	}
+}
+
+func getInput(p string, f (func())) {
+	if gettingInput {
+		return
+	}
+	
+	inputPrefix = p
+	inputFinish = f
+	gettingInput = true
+	for i := 0; i < len(input); i++ {
+		input[i] = 0;
+	}
+	inputCursor = 0
+	bottom--
+}
+
+func finishInput(good bool) {
+	if good {
+		inputFinish()
+	}
+	
+	gettingInput = false
+	bottom++
+	
+	termbox.HideCursor()
+}
+
+func insertRune(r rune) {
+	var i int
+	a := string(r)
+	l := len(a)
+	
+	for i = len(input) - 1; i > l && i > inputCursor; i-- {
+		input[i] = input[i-l];
+	}
+	
+	for i = 0; i < l; i++ {
+		input[inputCursor+i] = a[i]
+	}
+	
+	inputCursor += l
+}
+
+func handleInput(ev termbox.Event) {
+	if ev.Ch == 0 {
+		switch ev.Key {
+		case termbox.KeySpace:
+			insertRune(' ')
+		case termbox.KeyEnter:
+			finishInput(true)
+		case termbox.KeyEsc:
+			finishInput(false)
+
+		case termbox.KeyBackspace:
+			fallthrough
+		case termbox.KeyBackspace2:
+			if inputCursor == 0 {
+				return
+			}
+			_, s := utf8.DecodeLastRuneInString(string(input[:inputCursor]))
+			if inputCursor < s {
+				return
+			}
+			
+			for i := inputCursor - s; i + s < len(input); i++ {
+				input[i] = input[i+s]
+			}
+			
+			inputCursor -= s
+
+		case termbox.KeyArrowLeft:
+			fallthrough
+		case termbox.KeyCtrlB:
+			_, s := utf8.DecodeLastRuneInString(string(input[:inputCursor]))
+			if s > 0 {
+				inputCursor -= s
+			}
+
+		case termbox.KeyArrowRight:
+			fallthrough
+		case termbox.KeyCtrlF:
+			_, s := utf8.DecodeRuneInString(string(input[inputCursor:]))
+			if input[inputCursor] != 0 {
+				inputCursor += s
+			}
+		}
+	} else {
+		insertRune(ev.Ch)
+	}
+}
+
+func scan(path string) *Line {
+	var f, l *Line
+	var n, i int
+	var err error
+	
+	file, err := os.Open(path)
+	if err != nil {
+		panic(err)
+	}
+	defer file.Close()
+	
+	data := make([]byte, 2048)
+	f = new(Line)
+	l = f
+	for {
+		n, err = file.Read(data)
+		if err != nil || n == 0 {
+			break
+		}
+		
+		for i = 0; i < n; i++ {
+			if data[i] == '\n' {
+				break
+			}
+		}
+		
+		if i >= n {
+			fmt.Println("2048 was not enough bytes to hold a line, go yell at mytchel")
+			panic(nil)
+		}
+		
+		l.Next = new(Line)
+		l.Next.Prev = l
+		l = l.Next
+		l.Value = string(data[:i])
+		
+		file.Seek(int64(1 + i - n), 1)
+	}
+	
+	fmt.Println("done")
+	
+	f.Next.Prev = nil
+	l.Next = nil
+	return f.Next
 }
 
 func main () {
@@ -323,22 +540,17 @@ func main () {
 	lock = new(sync.Mutex)
 	tmp = *tmpDir
 
+	lines = scan(tmp + SuffixPlaylist)
+
+	cursor = lines
+	if cursor == nil {
+		fmt.Println("What is the point if there is nothing to manage?")
+		os.Exit(1)
+	}
+
 	err = termbox.Init()
 	if err != nil {
 		panic(err)
-	}
-	
-	songs, err = mmusic.Scan(tmp + mmusic.SuffixPlaylist)
-	if err != nil {
-		termbox.Close()
-		panic(err)
-	}
-	
-	cursor = songs.Next
-	if cursor == nil {
-		termbox.Close()
-		fmt.Println("What is the point if there is nothing to manage?")
-		os.Exit(1)
 	}
 	
 	termbox.SetInputMode(termbox.InputEsc)
@@ -349,6 +561,11 @@ func main () {
 	bottom = height - 1
 	fromTop = 0
 	
+	searchReg = nil
+	
+	input = make([]byte, 2048)
+	gettingInput = false
+	
 	drawMain()
 	go func() {
 		for {
@@ -358,36 +575,49 @@ func main () {
 			time.Sleep(1000 * 1000 * 10)
 		}
 	}()
-			
 	
 	for {
 		ev := termbox.PollEvent()
 		lock.Lock()
 		switch ev.Type {
 		case termbox.EventKey:
-			if ev.Ch > 0 {
-				f := normKeys[ev.Ch]
-				if f != nil {
-					f()
-				}
-			} else {
-				f := ctrlKeys[ev.Key]
-				if f != nil {
-					f()
+			 /* getting input from bottom */
+			if gettingInput {
+				handleInput(ev)
+			} else { /* just a normal key */
+				if ev.Ch > 0 {
+					f := normKeys[ev.Ch]
+					if f != nil {
+						f()
+					}
+				} else {
+					f := ctrlKeys[ev.Key]
+					if f != nil {
+						f()
+					}
 				}
 			}
 		case termbox.EventResize:
 			width = ev.Width
 			height = ev.Height
+			bottom = height - 1
 		case termbox.EventError:
-			termbox.Close() /* possible? */
 			panic(ev.Err)
 		}
-		
 		
 		termbox.Clear(termbox.ColorDefault, termbox.ColorDefault)
 		drawMain()
 		drawBar()
+		
+		if gettingInput {
+			fg := termbox.ColorBlack
+			bg := termbox.ColorWhite
+
+			putString(inputPrefix, 0, bottom + 1, fg, bg)
+			putString(string(input), len(inputPrefix), bottom + 1, fg, bg)
+			
+			termbox.SetCursor(len(inputPrefix) + len(string(input[:inputCursor])), bottom + 1)
+		}
 		
 		termbox.Flush()
 		lock.Unlock()

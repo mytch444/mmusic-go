@@ -1,6 +1,7 @@
-#mmusic/mmusic
+#mmusic
 
-Music managment daemon written in go, it uses gstreamer.
+Music managment daemon written in go, it uses gstreamer. So you will
+need to get [some bindings](github.com/ziutek/gst) first.
 
 Try `mmusic -h` for some options.
 
@@ -10,15 +11,16 @@ does not fork to the background if you want that do it with your shell.
 
 When run it will create and populate the following directory (you can
 change the path with the `-t` option). If this already exists `mmusic`
-will exit and give a warning.
+will give a warning and exit.
 
     $tmp                        # defaults to /tmp/mmusic-$USER_ID
 
         in                      # fifo that listens that you can control
                                   mmusic with.
 
-        playlist                # concatination of all playlist file files
-                                  that were given.
+        playlist                # files that are in the lineup, these are
+                                  added by looking through the playlist
+                                  files given at startup.
 
         upcoming                # add file paths (or uri's) and they
                                   will be played next.
@@ -35,10 +37,9 @@ will exit and give a warning.
 
 The `in` fifo will listen for the following commands.
 
-    next                # goes to next song.
+    exit                # exits
 
-    scan                # rescans the playlist and builds its library of
-                          music files.
+    next                # goes to next song.
 
     random              # sets mode to random
 
@@ -48,11 +49,9 @@ The `in` fifo will listen for the following commands.
 
     resume              # resumes playback
 
-    increase            # increase the volume by 1%
+    increase            # increase the volume by 5%
 
-    decrease            # decrease the volume by 1%
-
-    mute                # set volume to 0%
+    decrease            # decrease the volume by 5%
 
 Once the current stream ends or you write `next` to `in` `mmusic` will
 reads the upcoming file to find if there is anything it should play,
@@ -70,18 +69,19 @@ can for example add "/media/music" then add "!/media/music/Katy Perry"
 to exclude Katy Perry, not that I have anything against Katy Perry.
 
 In terms of playlist managment `mmusic` doesn't really do anything. When
-you run it give playlist files as arguments and/or stdin (give `--`) lines
-to it and it will write everything you give it to `$tmp/playlist`. You
-can add things to this as you go (the write `scan` to `$tmp/in`).
+you run it, give playlist files either as arguments or piped to stdin
+(with `-stdin` option) and it will populate `$tmp/playlist` with the files
+it found in subdirectories of paths given.
 
-Send SIGTERM to `mmusic` to stop it.
+Sending SIGTERM to `mmusic` has the same effect as writing `exit` to the
+fifo.
 
 Works with any sort of files gstreamer can play (so yes, can play network
 streams).
 
 #mmterm/mmterm
 
-Note: Not yet implimented.
+Note: Not fully functional yet.
 
 A termbox-go controller for `mmusic`. From it you can choose playlists,
 manage their contents, select songs to play, add to upcoming (start and
@@ -92,25 +92,9 @@ as adding better playlist controls.
 
 It stores it's playlists in `$XDG_CONFIG/mmterm/`
 
-##lib/mmusic
-
-library that is used by `mmusic` and `mmterm` for common functions such
-as parsing playlist files and not much else. If you want to make your
-own front end for whatever reason this could be helpful.
-
 #Notes
-
-####On the strange (src) directory structure.
-
-I have no idea how to do anything in go, this build system is odd.
-Leave me alone.
-
-Do not need the ability to play a certain file as the user can add said
-file to `upcoming` then `next` to play it.
 
 Note: There seems to be some problems with the fifo. Don't write things
 to it too quickly. ie: if you do a loop in bash put a delay of a few
 milliseconds in between each iteration.
 
-`mmusic` seems to handle unicode fairly well. `mmterm` however does not. 
-At the moment at least.
