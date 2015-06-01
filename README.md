@@ -79,7 +79,7 @@ fifo.
 Works with any sort of files gstreamer can play (so yes, can play network
 streams).
 
-#mmterm/mmterm
+#mmterm
 
 Note: Not fully functional yet.
 

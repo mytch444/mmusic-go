@@ -521,8 +521,6 @@ func scan(path string) *Line {
 		file.Seek(int64(1 + i - n), 1)
 	}
 	
-	fmt.Println("done")
-	
 	f.Next.Prev = nil
 	l.Next = nil
 	return f.Next
@@ -572,7 +570,7 @@ func main () {
 			lock.Lock()
 			drawBar()
 			lock.Unlock()
-			time.Sleep(1000 * 1000 * 10)
+			time.Sleep(1000 * 1000 * 100)
 		}
 	}()
 	
