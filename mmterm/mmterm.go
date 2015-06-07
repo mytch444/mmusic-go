@@ -78,6 +78,7 @@ var inputFinish (func())
 
 var searchingForward bool
 var searchReg *regexp.Regexp
+var searchLoop bool
 
 var lines *Line
 var cursor *Line
@@ -192,6 +193,8 @@ func search() {
 		panic(err)
 	}
 	
+	searchLoop = false;
+	
 	searchNext()
 }
 
@@ -219,7 +222,9 @@ func searchNext() {
 			l = l.Prev
 		}
 	
-		if l != nil && searchReg.MatchString(l.Value) {
+		if l == nil {
+			break;
+		} else if searchReg.MatchString(l.Value) {
 			cursor = l
 			fromTop = bottom / 2
 			break
@@ -228,7 +233,9 @@ func searchNext() {
 }
 
 func searchNextInverse() {
-	
+	searchingForward = !searchingForward
+	searchNext()
+	searchingForward = !searchingForward
 }
 
 func viewPlaylists() {
@@ -570,7 +577,7 @@ func main () {
 			lock.Lock()
 			drawBar()
 			lock.Unlock()
-			time.Sleep(1000 * 1000 * 100)
+			time.Sleep(100000000)
 		}
 	}()
 	

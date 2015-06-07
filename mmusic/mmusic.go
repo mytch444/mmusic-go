@@ -18,7 +18,7 @@ var SuffixPlaylist string   = "/playlist"
 var SuffixUpcoming string   = "/upcoming"
 var SuffixVolume string     = "/volume"
 var SuffixPlaying string    = "/playing"
-var SuffixIsrandom string   = "/israndom"
+var SuffixIsRandom string   = "/israndom"
 var SuffixIsPaused string   = "/ispaused"
 
 type Song struct {
