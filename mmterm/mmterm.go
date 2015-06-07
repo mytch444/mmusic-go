@@ -97,20 +97,44 @@ var ViewPlaylist  int = 2
 var ViewUpcoming  int = 3
 var views [4]*View
 
+var playlistDir string
+
 func exit() {
 	termbox.Close()
 	os.Exit(0)
 }
 
+func startMMusic(playlist string) {
+	argv := make([]string, 2)
+	argv[0] = "mmusic"
+	argv[1] = playlist
+	p, err := os.StartProcess("/home/nilp/go/bin/mmusic", argv, new(os.ProcAttr))
+	if err != nil {
+		termbox.Close()
+		fmt.Println("Failed to start mmusic\n")
+		os.Exit(1)
+	}
+	p.Release()
+}
+
 func playCursor() {
 	if cursor != nil {
-		addTopUpcoming()
-		next()
+		if currentView == ViewPlaylists {
+			writeToIn("exit")
+			startMMusic(playlistDir + "/" + cursor.Value)
+			time.Sleep(100000000)
+			refresh()
+			viewPlaylist()
+			gotoPlaying()
+		} else {
+			addTopUpcoming()
+			next()
+		}
 	}
 }
 
 func addUpcoming() {
-	if cursor == nil {
+	if cursor == nil || currentView == ViewPlaylists {
 		return
 	}
 	
@@ -128,7 +152,7 @@ func addUpcoming() {
 }
 
 func addTopUpcoming() {
-	if cursor == nil {
+	if cursor == nil || currentView == ViewPlaylists {
 		return
 	}
 	
@@ -336,6 +360,10 @@ func findLine(value string, l *Line) *Line {
 }
 
 func gotoPlaying() {
+	if currentView == ViewPlaylists {
+		return
+	}
+	
 	playing := getPlaying()
 	if playing == "" {
 		return
@@ -377,12 +405,10 @@ func pageUp() {
 
 func writeToIn(code string) {
 	in, err := os.OpenFile(tmp + SuffixIn, os.O_WRONLY, os.ModeNamedPipe)
-	if err != nil {
-		termbox.Close()
-		panic(err)
+	if err == nil {
+		in.WriteString(code)
+		in.Close()
 	}
-	in.WriteString(code)
-	in.Close()
 }
 
 func putString(str string, x, y int, fg, bg termbox.Attribute) {
@@ -419,21 +445,17 @@ func drawBar() {
 	putString(playing, 4, bottom, fg, bg)
 		
 	f, err = os.Open(tmp + SuffixVolume)
-	if err != nil {
-		fmt.Println("Error reading", tmp + SuffixVolume)
-		exit()
+	if err == nil {
+		n, err = f.Read(data)
+	
+		termbox.SetCell(width-1, bottom, '%', fg, bg)
+		for i := 2; i <= n; i++ {
+			termbox.SetCell(width-i, bottom,
+			                rune(data[n-i]), fg, bg)
+		}
+		f.Close()
 	}
 	
-	n, err = f.Read(data)
-	
-	termbox.SetCell(width-1, bottom, '%', fg, bg)
-	for i := 2; i <= n; i++ {
-		termbox.SetCell(width-i, bottom,
-		                rune(data[n-i]), fg, bg)
-	}
-
-	f.Close()
-
 	termbox.Flush()
 }
 
@@ -579,8 +601,7 @@ func handleInput(ev termbox.Event) {
 func getPlaying() string {
 	f, err := os.Open(tmp + SuffixPlaying)
 	if err != nil {
-		termbox.Close()
-		panic(err)
+		return ""
 	}
 	defer f.Close()
 	
@@ -601,7 +622,7 @@ func scan(path string) *Line {
 	
 	file, err := os.Open(path)
 	if err != nil {
-		panic(err)
+		return nil
 	}
 	defer file.Close()
 	
@@ -655,7 +676,7 @@ func updateCursor(view *View) {
 }
 
 func readPlaylists() *Line {
-	playlistDir := os.Getenv("HOME") + "/.config/mmusic"
+	playlistDir = os.Getenv("HOME") + "/.config/mmusic"
 	dir, err := os.Open(playlistDir)
 	if err != nil {
 		termbox.Close()
@@ -690,6 +711,8 @@ func refresh() {
 	
 	views[ViewUpcoming].Lines = scan(tmp + SuffixUpcoming)
 	updateCursor(views[ViewUpcoming])
+	
+	loadView(currentView)
 }
 
 func main () {
