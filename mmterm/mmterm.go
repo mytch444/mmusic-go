@@ -55,6 +55,7 @@ var normKeys = map[rune](func()) {
 	'l': next,
 	'p': togglePause,
 	'r': toggleRandom,
+	'R': refresh,
 	'/': searchForward,
 	'?': searchBackward,
 	'n': searchNext,
@@ -102,8 +103,10 @@ func exit() {
 }
 
 func playCursor() {
-	addTopUpcoming()
-	next()
+	if cursor != nil {
+		addTopUpcoming()
+		next()
+	}
 }
 
 func addUpcoming() {
@@ -238,47 +241,47 @@ func searchNextInverse() {
 	searchingForward = !searchingForward
 }
 
-func changeView(view int) {
+func saveCurrentView() {
+	if currentView < 0 {
+		return
+	}
+	
 	views[currentView].FromTop = fromTop
 	views[currentView].Cursor = cursor
 	views[currentView].Lines = lines
+}
+
+func loadView(view int) {
+	fromTop = views[view].FromTop
+	cursor = views[view].Cursor
+	lines = views[view].Lines
 	currentView = view
-	fromTop = views[currentView].FromTop
-	cursor = views[currentView].Cursor
-	lines = views[currentView].Lines
 }
 
 func viewPlaylists() {
-	exit()
+	saveCurrentView()
+	loadView(ViewPlaylists)
 }
 
 func viewPlaylist() {
-	changeView(ViewPlaylist)
+	saveCurrentView()
+	loadView(ViewPlaylist)
 }
 
 func viewUpcoming() {
-	changeView(ViewUpcoming)
+	saveCurrentView()
+	loadView(ViewUpcoming)
+	
 	go func() {
 		for currentView == ViewUpcoming {
 			lock.Lock()
-			lines = scan(tmp + SuffixUpcoming)
-			if cursor == nil {
-				cursor = lines
-				lock.Unlock()
-				time.Sleep(1000000000)
-				continue
-			}
 			
-			l := findLine(cursor.Value, lines)
-			if l == nil {
-				cursor = lines
-				fromTop = 0
-			} else {
-				cursor = l
-			}
+			saveCurrentView()
+			views[ViewUpcoming].Lines = scan(tmp + SuffixUpcoming)
+			updateCursor(views[ViewUpcoming])
+			loadView(ViewUpcoming)
 			
 			redraw()
-			
 			lock.Unlock()
 			time.Sleep(1000000000)
 		}
@@ -637,6 +640,58 @@ func scan(path string) *Line {
 	return f.Next
 }
 
+func updateCursor(view *View) {
+	if view.Cursor != nil {
+		l := findLine(view.Cursor.Value, view.Lines)
+		if l == nil {
+			view.Cursor = view.Lines
+			view.FromTop = 0
+		} else {
+			view.Cursor = l
+		}
+	} else {
+		view.Cursor = view.Lines
+	}
+}
+
+func readPlaylists() *Line {
+	playlistDir := os.Getenv("HOME") + "/.config/mmusic"
+	dir, err := os.Open(playlistDir)
+	if err != nil {
+		termbox.Close()
+		fmt.Println("Failed to open", playlistDir)
+		os.Exit(1)
+	}
+	
+	playlists, err := dir.Readdirnames(0)
+	
+	lines := new(Line)
+	l := lines
+	for _, playlist := range playlists {
+		l.Next = new(Line)
+		l.Next.Prev = l
+		l = l.Next
+		l.Value = playlist
+	}
+	
+	if lines.Next != nil {
+		lines.Next.Prev = nil
+		l.Next = nil
+	}
+	return lines.Next
+}
+
+func refresh() {
+	views[ViewPlaylists].Lines = readPlaylists()
+	updateCursor(views[ViewPlaylists])
+	
+	views[ViewPlaylist].Lines = scan(tmp + SuffixPlaylist)
+	updateCursor(views[ViewPlaylist])
+	
+	views[ViewUpcoming].Lines = scan(tmp + SuffixUpcoming)
+	updateCursor(views[ViewUpcoming])
+}
+
 func main () {
 	var tmpDir *string
 	var err error
@@ -666,19 +721,8 @@ func main () {
 		views[i] = new(View)
 	}
 	
-	views[ViewPlaylists].FromTop = 0
-	views[ViewPlaylists].Lines = nil
-	views[ViewPlaylists].Cursor = nil
-	
-	views[ViewPlaylist].FromTop = 0
-	views[ViewPlaylist].Lines = scan(tmp + SuffixPlaylist)
-	views[ViewPlaylist].Cursor = views[ViewPlaylist].Lines
-	
-	views[ViewUpcoming].FromTop = 0
-	views[ViewUpcoming].Lines = scan(tmp + SuffixUpcoming)
-	views[ViewUpcoming].Cursor = views[ViewUpcoming].Lines
-
-	currentView = ViewNothing
+	refresh()
+	currentView = -1
 	
 	_, err = os.Stat(tmp)
 	if err != nil {
@@ -697,7 +741,7 @@ func main () {
 			lock.Lock()
 			drawBar()
 			lock.Unlock()
-			time.Sleep(1000000000)
+			time.Sleep(10000000)
 		}
 	}()
 	
