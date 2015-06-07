@@ -39,6 +39,7 @@ var ctrlKeys = map[termbox.Key](func()) {
 	termbox.KeyHome: gotoTop,
 	termbox.KeyEnd: gotoBottom,
 	termbox.KeyCtrlC: exit,
+	termbox.KeySpace: togglePause,
 }
 
 var normKeys = map[rune](func()) {
@@ -47,7 +48,6 @@ var normKeys = map[rune](func()) {
 	'A': addTopUpcoming,
 	'l': next,
 	'p': togglePause,
-	' ': togglePause,
 	'r': toggleRandom,
 	'/': searchForward,
 	'?': searchBackward,
@@ -60,7 +60,7 @@ var normKeys = map[rune](func()) {
 	'k': movePrev,
 	'g': gotoTop,
 	'G': gotoBottom,
-	's': gotoPlaying,
+	'c': gotoPlaying,
 	'+': increaseVolume,
 	'-': decreaseVolume,
 }
@@ -78,7 +78,6 @@ var inputFinish (func())
 
 var searchingForward bool
 var searchReg *regexp.Regexp
-var searchLoop bool
 
 var lines *Line
 var cursor *Line
@@ -113,6 +112,10 @@ func playCursor() {
 }
 
 func addUpcoming() {
+	if cursor == nil {
+		return
+	}
+	
 	upcoming, err := os.OpenFile(tmp + SuffixUpcoming, os.O_WRONLY, 0666)
 	if err != nil {
 		termbox.Close()
@@ -127,6 +130,10 @@ func addUpcoming() {
 }
 
 func addTopUpcoming() {
+	if cursor == nil {
+		return
+	}
+	
 	f, err := ioutil.TempFile(os.TempDir(), ".mmusic")
 	if err != nil {
 		termbox.Close()
@@ -193,8 +200,6 @@ func search() {
 		panic(err)
 	}
 	
-	searchLoop = false;
-	
 	searchNext()
 }
 
@@ -210,7 +215,7 @@ func searchBackward() {
 
 func searchNext() {
 	var l *Line
-	if searchReg == nil {
+	if cursor == nil || searchReg == nil {
 		return
 	}
 	
@@ -239,19 +244,22 @@ func searchNextInverse() {
 }
 
 func viewPlaylists() {
-
+	exit()
 }
 
 func viewPlaylist() {
-
+	lines = scan(tmp + SuffixPlaylist)
+	gotoPlaying()
 }
 
 func viewUpcoming() {
-
+	lines = scan(tmp + SuffixUpcoming)
+	cursor = lines
+	fromTop = 0
 }
 
 func moveNext() {
-	if cursor.Next == nil {
+	if cursor == nil || cursor.Next == nil {
 		return
 	}
 	
@@ -263,7 +271,7 @@ func moveNext() {
 }
 
 func movePrev() {
-	if cursor.Prev == nil {
+	if cursor == nil || cursor.Prev == nil {
 		return
 	}
 	
@@ -280,6 +288,10 @@ func gotoTop() {
 }
 
 func gotoBottom() {
+	if cursor == nil {
+		return
+	}
+	
 	fromTop = bottom - 1
 	for cursor = lines; cursor.Next != nil; cursor = cursor.Next {}
 }
@@ -297,6 +309,10 @@ func gotoPlaying() {
 }
 
 func pageDown() {
+	if cursor == nil {
+		return
+	}
+	
 	i := 0
 	for ; cursor.Next != nil && i < bottom; cursor = cursor.Next {
 		i++
@@ -307,6 +323,10 @@ func pageDown() {
 }
 
 func pageUp() {
+	if cursor == nil {
+		return
+	}
+	
 	i := 0
 	for ; cursor.Prev != nil && i < bottom; cursor = cursor.Prev {
 		i++
@@ -370,7 +390,8 @@ func drawBar() {
 	if n > 1 {
 		termbox.SetCell(width-1, bottom, '%', fg, bg)
 		for i := 2; i <= n; i++ {
-			termbox.SetCell(width-i, bottom, rune(data[n-i]), fg, bg)
+			termbox.SetCell(width-i, bottom,
+			                rune(data[n-i]), fg, bg)
 		}
 	}
 
@@ -390,7 +411,8 @@ func drawMain() {
 		y--
 	}
 	
-	putString(cursor.Value, 0, fromTop, termbox.ColorWhite, termbox.ColorBlack)
+	putString(cursor.Value, 0, fromTop,
+	          termbox.ColorWhite, termbox.ColorBlack)
 	
 	y = fromTop+1
 	for s := cursor.Next; s != nil && y < bottom; s = s.Next {
@@ -457,7 +479,8 @@ func handleInput(ev termbox.Event) {
 			if inputCursor == 0 {
 				return
 			}
-			_, s := utf8.DecodeLastRuneInString(string(input[:inputCursor]))
+			_, s := utf8.DecodeLastRuneInString(
+			          string(input[:inputCursor]))
 			if inputCursor < s {
 				return
 			}
@@ -471,7 +494,8 @@ func handleInput(ev termbox.Event) {
 		case termbox.KeyArrowLeft:
 			fallthrough
 		case termbox.KeyCtrlB:
-			_, s := utf8.DecodeLastRuneInString(string(input[:inputCursor]))
+			_, s := utf8.DecodeLastRuneInString(
+			          string(input[:inputCursor]))
 			if s > 0 {
 				inputCursor -= s
 			}
@@ -479,7 +503,8 @@ func handleInput(ev termbox.Event) {
 		case termbox.KeyArrowRight:
 			fallthrough
 		case termbox.KeyCtrlF:
-			_, s := utf8.DecodeRuneInString(string(input[inputCursor:]))
+			_, s := utf8.DecodeRuneInString(
+			           string(input[inputCursor:]))
 			if input[inputCursor] != 0 {
 				inputCursor += s
 			}
@@ -516,7 +541,7 @@ func scan(path string) *Line {
 		}
 		
 		if i >= n {
-			fmt.Println("2048 was not enough bytes to hold a line, go yell at mytchel")
+			fmt.Println("2048 was not enough bytes to hold a line!")
 			panic(nil)
 		}
 		
@@ -544,15 +569,7 @@ func main () {
 	
 	lock = new(sync.Mutex)
 	tmp = *tmpDir
-
-	lines = scan(tmp + SuffixPlaylist)
-
-	cursor = lines
-	if cursor == nil {
-		fmt.Println("What is the point if there is nothing to manage?")
-		os.Exit(1)
-	}
-
+	
 	err = termbox.Init()
 	if err != nil {
 		panic(err)
@@ -566,7 +583,13 @@ func main () {
 	bottom = height - 1
 	fromTop = 0
 	
-	searchReg = nil
+	_, err = os.Stat(tmp)
+	if err != nil {
+		viewPlaylists()
+	} else {
+		viewPlaylist()
+		gotoPlaying()
+	}
 	
 	input = make([]byte, 2048)
 	gettingInput = false
@@ -619,9 +642,12 @@ func main () {
 			bg := termbox.ColorWhite
 
 			putString(inputPrefix, 0, bottom + 1, fg, bg)
-			putString(string(input), len(inputPrefix), bottom + 1, fg, bg)
+			putString(string(input), len(inputPrefix),
+			          bottom + 1, fg, bg)
 			
-			termbox.SetCursor(len(inputPrefix) + len(string(input[:inputCursor])), bottom + 1)
+			termbox.SetCursor(len(inputPrefix) +
+			                  len(string(input[:inputCursor])),
+			                  bottom + 1)
 		}
 		
 		termbox.Flush()
