@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"flag"
 	"sync"
 	"time"
@@ -105,16 +106,13 @@ func exit() {
 }
 
 func startMMusic(playlist string) {
-	argv := make([]string, 2)
-	argv[0] = "mmusic"
-	argv[1] = playlist
-	p, err := os.StartProcess("/home/nilp/go/bin/mmusic", argv, new(os.ProcAttr))
+	cmd := exec.Command("mmusic", playlist)
+	err := cmd.Start()
 	if err != nil {
 		termbox.Close()
-		fmt.Println("Failed to start mmusic\n")
+		fmt.Println("Failed to start mmusic")
 		os.Exit(1)
 	}
-	p.Release()
 }
 
 func playCursor() {
