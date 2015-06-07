@@ -96,24 +96,6 @@ var ViewPlaylist  int = 2
 var ViewUpcoming  int = 3
 var views [4]*View
 
-func getPlaying() string {
-	f, err := os.Open(tmp + SuffixPlaying)
-	if err != nil {
-		termbox.Close()
-		panic(err)
-	}
-	defer f.Close()
-	
-	data := make([]byte, 2048)
-	n, err := f.Read(data)
-	
-	if n == 0 {
-		return ""
-	}
-	
-	return string(data[:n-1])
-}
-
 func exit() {
 	termbox.Close()
 	os.Exit(0)
@@ -276,6 +258,31 @@ func viewPlaylist() {
 
 func viewUpcoming() {
 	changeView(ViewUpcoming)
+	go func() {
+		for currentView == ViewUpcoming {
+			lock.Lock()
+			lines = scan(tmp + SuffixUpcoming)
+			if cursor == nil {
+				cursor = lines
+				lock.Unlock()
+				time.Sleep(1000000000)
+				continue
+			}
+			
+			l := findLine(cursor.Value, lines)
+			if l == nil {
+				cursor = lines
+				fromTop = 0
+			} else {
+				cursor = l
+			}
+			
+			redraw()
+			
+			lock.Unlock()
+			time.Sleep(1000000000)
+		}
+	}()
 }
 
 func moveNext() {
@@ -316,15 +323,24 @@ func gotoBottom() {
 	for cursor = lines; cursor.Next != nil; cursor = cursor.Next {}
 }
 
+func findLine(value string, l *Line) *Line {
+	for ; l != nil; l = l.Next {
+		if strings.HasSuffix(value, l.Value) {
+			return l
+		}
+	}
+	return nil
+}
+
 func gotoPlaying() {
 	playing := getPlaying()
-	
-	for l := lines; l != nil; l = l.Next {
-		if strings.HasSuffix(playing, l.Value) {
-			fromTop = bottom / 2
-			cursor = l
-			break
-		}
+	if playing == "" {
+		return
+	}
+	l := findLine(playing, lines)
+	if l != nil {
+		fromTop = bottom / 2
+		cursor = l
 	}
 }
 
@@ -401,22 +417,20 @@ func drawBar() {
 		
 	f, err = os.Open(tmp + SuffixVolume)
 	if err != nil {
-		termbox.Close()
-		panic(err)
+		fmt.Println("Error reading", tmp + SuffixVolume)
+		exit()
 	}
 	
 	n, err = f.Read(data)
 	
-	if n > 1 {
-		termbox.SetCell(width-1, bottom, '%', fg, bg)
-		for i := 2; i <= n; i++ {
-			termbox.SetCell(width-i, bottom,
-			                rune(data[n-i]), fg, bg)
-		}
+	termbox.SetCell(width-1, bottom, '%', fg, bg)
+	for i := 2; i <= n; i++ {
+		termbox.SetCell(width-i, bottom,
+		                rune(data[n-i]), fg, bg)
 	}
 
 	f.Close()
-		
+
 	termbox.Flush()
 }
 
@@ -424,6 +438,10 @@ func drawMain() {
 	var y int
 	fg := termbox.ColorBlack
 	bg := termbox.ColorWhite
+	
+	if cursor == nil {
+		return
+	}
 	
 	y = fromTop - 1
 	for s := cursor.Prev; s != nil && y >= 0; s = s.Prev {
@@ -439,6 +457,27 @@ func drawMain() {
 		putString(s.Value, 0, y, fg, bg)
 		y++
 	}
+}
+
+func redraw() {
+	termbox.Clear(termbox.ColorDefault, termbox.ColorDefault)
+	drawMain()
+	drawBar()
+		
+	if gettingInput {
+		fg := termbox.ColorBlack
+		bg := termbox.ColorWhite
+
+		putString(inputPrefix, 0, bottom + 1, fg, bg)
+		putString(string(input), len(inputPrefix),
+		          bottom + 1, fg, bg)
+			
+		termbox.SetCursor(len(inputPrefix) +
+		                  len(string(input[:inputCursor])),
+		                  bottom + 1)
+	}
+		
+	termbox.Flush()
 }
 
 func getInput(p string, f (func())) {
@@ -534,6 +573,24 @@ func handleInput(ev termbox.Event) {
 	}
 }
 
+func getPlaying() string {
+	f, err := os.Open(tmp + SuffixPlaying)
+	if err != nil {
+		termbox.Close()
+		panic(err)
+	}
+	defer f.Close()
+	
+	data := make([]byte, 2048)
+	n, err := f.Read(data)
+	
+	if n == 0 {
+		return ""
+	}
+	
+	return string(data[:n-1])
+}
+
 func scan(path string) *Line {
 	var f, l *Line
 	var n, i int
@@ -573,8 +630,10 @@ func scan(path string) *Line {
 		file.Seek(int64(1 + i - n), 1)
 	}
 	
-	f.Next.Prev = nil
-	l.Next = nil
+	if f.Next != nil {
+		f.Next.Prev = nil
+		l.Next = nil
+	}
 	return f.Next
 }
 
@@ -638,7 +697,7 @@ func main () {
 			lock.Lock()
 			drawBar()
 			lock.Unlock()
-			time.Sleep(100000000)
+			time.Sleep(1000000000)
 		}
 	}()
 	
@@ -671,24 +730,8 @@ func main () {
 			panic(ev.Err)
 		}
 		
-		termbox.Clear(termbox.ColorDefault, termbox.ColorDefault)
-		drawMain()
-		drawBar()
-		
-		if gettingInput {
-			fg := termbox.ColorBlack
-			bg := termbox.ColorWhite
+		redraw()
 
-			putString(inputPrefix, 0, bottom + 1, fg, bg)
-			putString(string(input), len(inputPrefix),
-			          bottom + 1, fg, bg)
-			
-			termbox.SetCursor(len(inputPrefix) +
-			                  len(string(input[:inputCursor])),
-			                  bottom + 1)
-		}
-		
-		termbox.Flush()
 		lock.Unlock()
 	}
 	
