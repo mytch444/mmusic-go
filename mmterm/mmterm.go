@@ -27,6 +27,12 @@ type Line struct {
 	Next *Line
 }
 
+type View struct {
+	Cursor *Line
+	Lines *Line
+	FromTop int
+}
+
 var ctrlKeys = map[termbox.Key](func()) {
 	termbox.KeyEnter: playCursor,
 	termbox.KeyArrowDown: moveNext,
@@ -82,6 +88,13 @@ var searchReg *regexp.Regexp
 var lines *Line
 var cursor *Line
 var fromTop int
+var currentView int
+
+var ViewNothing   int = 0
+var ViewPlaylists int = 1
+var ViewPlaylist  int = 2
+var ViewUpcoming  int = 3
+var views [4]*View
 
 func getPlaying() string {
 	f, err := os.Open(tmp + SuffixPlaying)
@@ -243,19 +256,26 @@ func searchNextInverse() {
 	searchingForward = !searchingForward
 }
 
+func changeView(view int) {
+	views[currentView].FromTop = fromTop
+	views[currentView].Cursor = cursor
+	views[currentView].Lines = lines
+	currentView = view
+	fromTop = views[currentView].FromTop
+	cursor = views[currentView].Cursor
+	lines = views[currentView].Lines
+}
+
 func viewPlaylists() {
 	exit()
 }
 
 func viewPlaylist() {
-	lines = scan(tmp + SuffixPlaylist)
-	gotoPlaying()
+	changeView(ViewPlaylist)
 }
 
 func viewUpcoming() {
-	lines = scan(tmp + SuffixUpcoming)
-	cursor = lines
-	fromTop = 0
+	changeView(ViewUpcoming)
 }
 
 func moveNext() {
@@ -582,6 +602,24 @@ func main () {
 	width, height = termbox.Size()
 	bottom = height - 1
 	fromTop = 0
+	
+	for i := 0; i < len(views); i++ {
+		views[i] = new(View)
+	}
+	
+	views[ViewPlaylists].FromTop = 0
+	views[ViewPlaylists].Lines = nil
+	views[ViewPlaylists].Cursor = nil
+	
+	views[ViewPlaylist].FromTop = 0
+	views[ViewPlaylist].Lines = scan(tmp + SuffixPlaylist)
+	views[ViewPlaylist].Cursor = views[ViewPlaylist].Lines
+	
+	views[ViewUpcoming].FromTop = 0
+	views[ViewUpcoming].Lines = scan(tmp + SuffixUpcoming)
+	views[ViewUpcoming].Cursor = views[ViewUpcoming].Lines
+
+	currentView = ViewNothing
 	
 	_, err = os.Stat(tmp)
 	if err != nil {
