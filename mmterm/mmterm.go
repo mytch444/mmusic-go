@@ -410,8 +410,14 @@ func writeToIn(code string) {
 }
 
 func putString(str string, x, y int, fg, bg termbox.Attribute) {
-	for i := 0; i < len(str) && x + i < width; i++ {
-		termbox.SetCell(x+i, y, rune(str[i]), fg, bg)
+	len := 0
+	i := 0
+	for r, s := utf8.DecodeRuneInString(str[len:]);
+	    s > 0;
+	    r, s = utf8.DecodeRuneInString(str[len:]) {
+		termbox.SetCell(x+i, y, r, fg, bg)
+		len += s
+		i++
 	}
 }
 
