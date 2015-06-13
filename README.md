@@ -91,10 +91,3 @@ In otherwords, an interface that makes everything easier to see as well
 as adding better playlist controls.
 
 It stores it's playlists in `$XDG_CONFIG/mmterm/`
-
-#Notes
-
-Note: There seems to be some problems with the fifo. Don't write things
-to it too quickly. ie: if you do a loop in bash put a delay of a few
-milliseconds in between each iteration.
-

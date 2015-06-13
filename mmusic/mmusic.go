@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 	"math/rand"
+	"sort"
 	"github.com/ziutek/gst"
 )
 
@@ -107,6 +108,8 @@ func fillAndClean(songs *Song, bad *Song) {
 			if err != nil {
 				panic(err)
 			}
+			
+			sort.Strings(subs)
 			
 			next = s.Next
 			t = s
@@ -447,13 +450,14 @@ func main () {
 		fmt.Println("Failed to open gstreamer bus!")
 		os.Exit(1)
 	}
-	populateTmp(*tmpDir)
 	
 	p.tmpDir = *tmpDir
 	p.volume = float64(*volume) / 100
 	p.random = *random
 	p.lock = new(sync.Mutex)
 	p.songs = new(Song)
+	
+	populateTmp(p.tmpDir)
 	
 	file, err := os.Create(p.tmpDir + SuffixPlaylist)
 	if err != nil {
@@ -489,7 +493,7 @@ func main () {
 	}
 	
 	playlist.Close()
-	
+
 	updateVolume(p)
 	if p.random {
 		file, err = os.Create(p.tmpDir + SuffixIsRandom)

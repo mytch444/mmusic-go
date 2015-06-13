@@ -11,6 +11,7 @@ import (
 	"io/ioutil"
 	"unicode/utf8"
 	"regexp"
+	"sort"
 	"github.com/nsf/termbox-go"
 )
 
@@ -412,7 +413,7 @@ func writeToIn(code string) {
 func putString(str string, x, y int, fg, bg termbox.Attribute) {
 	len := 0
 	i := 0
-	for r, s := utf8.DecodeRuneInString(str[len:]);
+	for r, s := utf8.DecodeRuneInString(str);
 	    s > 0;
 	    r, s = utf8.DecodeRuneInString(str[len:]) {
 		termbox.SetCell(x+i, y, r, fg, bg)
@@ -680,7 +681,6 @@ func updateCursor(view *View) {
 }
 
 func readPlaylists() *Line {
-	playlistDir = os.Getenv("HOME") + "/.config/mmusic"
 	dir, err := os.Open(playlistDir)
 	if err != nil {
 		termbox.Close()
@@ -689,6 +689,8 @@ func readPlaylists() *Line {
 	}
 	
 	playlists, err := dir.Readdirnames(0)
+	
+	sort.Strings(playlists)
 	
 	lines := new(Line)
 	l := lines
@@ -721,15 +723,20 @@ func refresh() {
 
 func main () {
 	var tmpDir *string
+	var pDir *string
 	var err error
 	
 	defaultTmp := fmt.Sprintf("%s/mmusic-%d", os.TempDir(), os.Getuid())
+	defaultPlaylistDir := os.Getenv("HOME") + "/.config/mmusic"
+
 	tmpDir = flag.String("t", defaultTmp, "Set tmp directory.")
+	pDir = flag.String("p", defaultPlaylistDir, "Set playlist directory.")
 	
 	flag.Parse()
 	
 	lock = new(sync.Mutex)
 	tmp = *tmpDir
+	playlistDir = *pDir
 	
 	err = termbox.Init()
 	if err != nil {
