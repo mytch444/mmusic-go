@@ -14,45 +14,39 @@ change the path with the `-t` option). If this already exists `mmusic`
 will give a warning and exit.
 
     $tmp                        # defaults to /tmp/mmusic-$USER_ID
-
+    
         in                      # fifo that listens that you can control
                                   mmusic with.
-
+    
         playlist                # files that are in the lineup, these are
                                   added by looking through the playlist
                                   files given at startup.
-
+    
         upcoming                # add file paths (or uri's) and they
                                   will be played next.
-
+    
         playing                 # contains the uri currently playing.
-
-        volume                  # contains the volume percentage.
-
+    
         ispaused                # if this file exists, playback has been
                                   paused. No creating it does not pause
                                   playback... yet.
-
+    
         israndom                # same as above but for randomness.
-
+    
 The `in` fifo will listen for the following commands.
 
     exit                # exits
-
+    
     next                # goes to next song.
-
+    
     random              # sets mode to random
-
+    
     normal              # sets mode to normal
-
+    
     pause               # pauses playback
-
+    
     resume              # resumes playback
-
-    increase            # increase the volume by 5%
-
-    decrease            # decrease the volume by 5%
-
+    
 Once the current stream ends or you write `next` to `in` `mmusic` will
 reads the upcoming file to find if there is anything it should play,
 if upcoming is empty depending on mode selects a random song or the next
@@ -85,7 +79,7 @@ Note: Not fully functional yet.
 
 A termbox-go controller for `mmusic`. From it you can choose playlists,
 manage their contents, select songs to play, add to upcoming (start and
-end), toggle random, pause, change volume and view what is playing.
+end), toggle random, pause, and view what is playing.
 
 In otherwords, an interface that makes everything easier to see as well
 as adding better playlist controls.

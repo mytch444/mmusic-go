@@ -3,8 +3,8 @@ package main
 import (
 	"fmt"
 	"os"
+	"io"
 	"os/signal"
-	"sync"
 	"syscall"
 	"flag"
 	"strings"
@@ -17,7 +17,6 @@ import (
 var SuffixIn string         = "/in"
 var SuffixPlaylist string   = "/playlist"
 var SuffixUpcoming string   = "/upcoming"
-var SuffixVolume string     = "/volume"
 var SuffixPlaying string    = "/playing"
 var SuffixIsRandom string   = "/israndom"
 var SuffixIsPaused string   = "/ispaused"
@@ -27,145 +26,112 @@ type Song struct {
 	Next *Song
 }
 
-var codes = map[string](func(*Player)) {
-	"exit": exit,
-	"next": playNext,
-	"random": random,
-	"normal": normal,
-	"pause": pause,
-	"resume": resume,
-	"increase": increaseVolume,
-	"decrease": decreaseVolume,
-}
-
 type Player struct {
-	lock *sync.Mutex
-	
 	snd *gst.Element
 	bus *gst.Bus
 	
-	size int64 /* for convinience */
+	size int64 
 	songs *Song
 	
 	current *Song
 
-	volume float64
 	random bool
 	
 	playingFile *os.File
-	volumeFile *os.File
 	
 	tmpDir string
 }
 
-
-/* Returns the first line found in data looking no further than
- * n as well as the position of the next line (so you can os.Seek
- * to it).
- */
-func PopLine(data []byte, n int) (string, int) {
-	var i int
-	for i = 0; i < n; i++ {
-		if (data[i] == '\n') {
+func PopLine(file *os.File) (string, error) {
+	var i int 
+	data := make([]byte, 80)
+	line := ""
+	
+	for {
+		n, err := file.Read(data)
+		if err != nil {
+			return line, err
+		}
+		
+		for i = 0; i < n; i++ {
+			if (data[i] == '\n') {
+				break
+			}
+		}
+		
+		if i == 0 {
 			break
+		} else if i < n {
+			line += string(data[:i])
+			file.Seek(int64(i-n+1), 1)
+			break
+		} else {
+			line += string(data[:n])
 		}
 	}
 	
-	return string(data[:i]), i + 1
+	return line, nil
 }
 
-func songInBad(bad *Song, song *Song) bool {
-	for bad = bad.Next; bad != nil; bad = bad.Next {
-		if (strings.HasPrefix(song.Value, bad.Value)) {
-			return true
-		}
-	}
-	return false
-}
-
-func fillAndClean(songs *Song, bad *Song) {
+func fillSubDirs(songs *Song) {
 	var prev, next, t, s *Song
 	prev = songs
 	for s = songs.Next; s != nil; s = s.Next {
-		if (songInBad(bad, s)) {
-			prev.Next = s.Next
-		} else {
-			fi, err := os.Stat(s.Value)
-			if err != nil || !fi.IsDir() {
-				prev = s
-				continue
-			}
-			
-			
-			file, err := os.Open(s.Value)
-			if err != nil {
-				prev = s
-				file.Close()
-				continue
-			}
-			
-			subs, err := file.Readdirnames(0)
-			if err != nil {
-				panic(err)
-			}
-			
-			sort.Strings(subs)
-			
-			next = s.Next
-			t = s
-			for _, sub := range subs {
-				t.Next = new(Song)
-				t = t.Next
-				t.Value = s.Value + "/" + sub
-			}
-			
-			t.Next = next
-			
-			prev.Next = s.Next
-			file.Close()
+		fi, err := os.Stat(s.Value)
+		if err != nil || !fi.IsDir() {
+			prev = s
+			continue
 		}
+			
+		file, err := os.Open(s.Value)
+		if err != nil {
+			prev = s
+			file.Close()
+			continue
+		}
+			
+		subs, err := file.Readdirnames(0)
+		if err != nil {
+			panic(err)
+		}
+			
+		sort.Strings(subs)
+			
+		next = s.Next
+		t = s
+		for _, sub := range subs {
+			t.Next = new(Song)
+			t = t.Next
+			t.Value = s.Value + "/" + sub
+		}
+		
+		t.Next = next
+			
+		prev.Next = s.Next
+		file.Close()
 	}
 }
 
 func scan(file *os.File) (songs *Song) {
-	var seek int64 = 0
-	var s, b *Song
-	var n int
-	var err error
+	var s *Song
 	
 	songs = new(Song)
 	s = songs
 	
-	bad := new(Song)
-	bad.Next = nil
-	b = bad
-	
-	data := make([]byte, 2048)
-	err = nil
-
 	for {
-		n, err = file.Read(data)
-		if err != nil || n == 0 {
+		line, err := PopLine(file)
+		if err != nil {
 			break
+		} else if line == "" {
+			continue
 		}
-		
-		line, le := PopLine(data, n)
 
-		if line[0] == '!' {
-			b.Next = new(Song)
-			b = b.Next
-			b.Value = line[1:]
-		} else {
-			s.Next = new(Song)
-			s = s.Next
-			s.Value = line
-		}
-		
-		seek = int64(le - n)
-		file.Seek(seek, 1)
+		s.Next = new(Song)
+		s = s.Next
+		s.Value = line
 	}
 	
-	fillAndClean(songs, bad)
+	fillSubDirs(songs)
 	
 	return songs.Next
 }
@@ -178,20 +144,124 @@ func writeStringToValue(path string, s string) {
 	}
 }
 
+func (p *Player) Exit() {
+	os.RemoveAll(p.tmpDir)
+	os.Exit(0)
+}
+
+func (p *Player) SetModeRandom() {
+	p.random = true
+	f, err := os.Create(p.tmpDir + SuffixIsRandom)
+	if err == nil {
+		f.Close()
+	}
+}
+
+func (p *Player) SetModeNormal() {
+	p.random = false
+	os.Remove(p.tmpDir + SuffixIsRandom)
+}
+
+func (p *Player) Pause() {
+	p.snd.SetState(gst.STATE_PAUSED)
+	f, err := os.Create(p.tmpDir + SuffixIsPaused)
+	if err == nil {
+		f.Close()
+	}
+}
+
+func (p *Player) Resume() {
+	p.snd.SetState(gst.STATE_PLAYING)
+	os.Remove(p.tmpDir + SuffixIsPaused)
+}
+
+func (p *Player) PopUpcoming() error {
+	var s *Song
+	var data []byte = make([]byte, 2048)
+	var top string
+	
+	upcomingFile, err := os.Open(p.tmpDir + SuffixUpcoming)
+	if err != nil {
+		panic(err)
+	}
+	
+	top, err = PopLine(upcomingFile)
+	if err != nil {
+		return err
+	}
+	
+	if top == "" {
+		return io.EOF
+	}
+	
+	tmpFile, err := os.Create(p.tmpDir + "/.tmp")
+	if err != nil {
+		panic(err)
+	}
+	
+	for {
+		n, err := upcomingFile.Read(data)
+		if err != nil {
+			break
+		}
+		
+		tmpFile.Write(data[:n])
+	}
+	
+	upcomingFile.Close()
+	tmpFile.Close()
+
+	os.Rename(p.tmpDir + "/.tmp", p.tmpDir + SuffixUpcoming)
+
+	for s = p.songs.Next; s != nil; s = s.Next {
+		if strings.Contains(s.Value, top) {
+			break
+		}
+	}
+	
+	/* Not in the playlist so make a new song for it */
+	if s == nil {
+		s = new(Song)
+		s.Next = nil
+		s.Value = top
+	}
+	
+	p.current = s
+	return nil
+}
+
 /* TODO: improve this so it's not so random.
  * http://keyj.emphy.de/balanced-shuffle/
  */
-func randomSong(p *Player) *Song {
-	if p.size == 0 {
-		return nil
+func (p *Player) PickRandom() {
+	n := int(rand.Int63n(p.size))
+	p.current = p.songs.Next
+	for i := 0; i < n && p.current != nil; i++ {
+		p.current = p.current.Next
 	}
-	
-	n := rand.Int63n(p.size)
-	s := p.songs.Next
-	for i := int64(0); i < n && s != nil ; i++ {
-		s = s.Next
+}
+
+func (p *Player) PickNormal() {
+	if p.current != nil {
+		p.current = p.current.Next
 	}
-	return s
+
+	if p.current == nil {
+		p.current = p.songs.Next
+	}
+}
+
+func (p *Player) PickNext() {
+	err := p.PopUpcoming()
+	if err == nil {
+		return
+	} else if p.size == 0 {
+		p.Exit()
+	} else if p.random {
+		p.PickRandom()
+	} else {
+		p.PickNormal()
+	}
 }
 
 func makeURI(str string) string {
@@ -206,135 +276,10 @@ func makeURI(str string) string {
 	}
 }
 
-func exit(p *Player) {
-	os.RemoveAll(p.tmpDir)
-	os.Exit(0)
-}
-
-func random(p *Player) {
-	p.random = true
-	f, err := os.Create(p.tmpDir + SuffixIsRandom)
-	if err == nil {
-		f.Close()
-	}
-}
-
-func normal(p *Player) {
-	p.random = false
-	os.Remove(p.tmpDir + SuffixIsRandom)
-}
-
-func pause(p *Player) {
-	p.snd.SetState(gst.STATE_PAUSED)
-	f, err := os.Create(p.tmpDir + SuffixIsPaused)
-	if err == nil {
-		f.Close()
-	}
-}
-
-func resume(p *Player) {
-	p.snd.SetState(gst.STATE_PLAYING)
-	os.Remove(p.tmpDir + SuffixIsPaused)
-}
-
-func increaseVolume(p *Player) {
-	p.volume += 0.05
-	updateVolume(p)
-}
-
-func decreaseVolume(p *Player) {
-	p.volume -= 0.05
-	updateVolume(p)
-}
-
-func updateVolume(p *Player) {
-	if (p.volume > 1.0) {
-		p.volume = 1.0
-	} else if (p.volume < 0.0) {
-		p.volume = 0.0
-	}
-
-	p.snd.SetProperty("volume", p.volume)
-	
-	writeStringToValue(p.tmpDir + SuffixVolume,
-		fmt.Sprintf("%d\n", int(p.volume * 100)))
-}
-
-func popUpcoming(p *Player) *Song {
-	var s *Song
-	var data []byte = make([]byte, 2048)
-	var top string
-	
-	upcomingFile, err := os.Open(p.tmpDir + SuffixUpcoming)
-	if err != nil {
-		panic(err)
-	}
-
-	/* hopefully 2048 is enough bytes for the first line */
-	n, err := upcomingFile.Read(data)
-	if err != nil {
-		upcomingFile.Close()
-		return nil
-	}
-	
-	tmpFile, err := os.Create(p.tmpDir + "/.upcoming.tmp")
-	
-	top, le := PopLine(data, n)
-	tmpFile.Write(data[le:n])
-	for {
-		n, err := upcomingFile.Read(data)
-		if err != nil {
-			break
-		}
-		
-		tmpFile.Write(data[:n])
-	}
-	
-	upcomingFile.Close()
-	tmpFile.Close()
-	os.Remove(p.tmpDir + SuffixUpcoming)
-	os.Rename(p.tmpDir + "/.upcoming.tmp",
-	          p.tmpDir + SuffixUpcoming)
-
-	for s = p.songs.Next; s != nil; s = s.Next {
-		if strings.Contains(s.Value, top) {
-			return s
-		}
-	}
-	
-	s = new(Song)
-	s.Next = nil
-	s.Value = top
-	return s
-}
-
-func playNext(p *Player) {
-	p.snd.SetState(gst.STATE_NULL)
-	
-	old := p.current
-	p.current = popUpcoming(p)
-	
-	if p.current == nil {
-		if p.random {
-			p.current = randomSong(p)
-		} else {
-			if old != nil {
-				p.current = old.Next
-				if p.current == nil {
-					p.current = p.songs.Next
-				}
-			} else {
-				p.current = p.songs.Next
-			}
-		}
-	
-		if p.current == nil {
-			fmt.Println("There are no songs to play!")
-			return
-		}
-	}
-	
+func (p *Player) PlayNext() {
+	p.PickNext()
 	uri := makeURI(p.current.Value)
+	p.snd.SetState(gst.STATE_NULL)
 	p.snd.SetProperty("uri", uri)
 	p.snd.SetState(gst.STATE_PLAYING)
 
@@ -342,29 +287,7 @@ func playNext(p *Player) {
 	writeStringToValue(p.tmpDir + SuffixPlaying, uri + "\n")
 }
 
-/* init functions */
-
-func populateTmp(path string) {
-	var f *os.File
-	_, err := os.Stat(path)
-	if err == nil { /* File exits? */
-		fmt.Println(path, "exists. Is another instance already running? If you really want another set -t to something.")
-		os.Exit(1)
-	}
-	
-	/* Just hope there are no errors. */
-	os.Mkdir(path, 0700)
-	syscall.Mkfifo(path + SuffixIn, 0700)
-	
-	f, _ = os.Create(path + SuffixUpcoming)
-	f.Close()
-	f, _ = os.Create(path + SuffixPlaying)
-	f.Close()
-	f, _ = os.Create(path + SuffixVolume)
-	f.Close()
-}
-
-func listenFifo(p *Player) {
+func listenFifo(p *Player, c chan string) {
 	var data = make([]byte, 512)
 
 	for {
@@ -378,69 +301,95 @@ func listenFifo(p *Player) {
 			panic(err)
 		}
 		
+		in.Close()
+		
 		str := string(data[:n])
 		for _, name := range strings.Fields(str) {
-			code := codes[name]
-			if code != nil {
-				p.lock.Lock()
-				code(p)
-				p.lock.Unlock()
-			}
+			c <- name
 		}
-		in.Close()
 	}
 }
 
-func listenBus(p *Player) {
+func listenBus(p *Player, c chan *gst.Message) {
 	for {
-		time.Sleep(1000 * 1000)
+		time.Sleep(time.Second)
 		mesg := p.bus.TimedPop(100000000)
 		if mesg != nil {
-			t := mesg.GetType()
-			if t == gst.MESSAGE_EOS || t == gst.MESSAGE_ERROR {
-			 /* best to just move on with life. */
-				p.lock.Lock()
-				playNext(p)
-				p.lock.Unlock()
-			}
+			c <- mesg
 		}
 	}
 }
 
-func main () {
-	var tmpDir *string
-	var nsink *string
-	var random *bool
-	var volume *int64
-	var readstdin *bool
-	
-	var sigChan chan os.Signal = make(chan os.Signal, 1)
-	
-	defaultTmp := fmt.Sprintf("%s/mmusic-%d", os.TempDir(), os.Getuid())
-	
-	tmpDir = flag.String("t", defaultTmp, "Set tmp directory.")
-	nsink = flag.String("l", "alsasink", "Change gstreamer sink.")
-	random = flag.Bool("r", true, "Set starting randomness.")
-	volume = flag.Int64("v", 50, "Set starting volume [0-100].")
-	readstdin = flag.Bool("stdin", false, "Read stdin as a playlist file.")
+func doFunction(p *Player, mesg string) {
+	if mesg == "exit" {
+		p.Exit()
+	} else if mesg == "next" {
+		p.PlayNext()
+	} else if mesg == "random" {
+		p.SetModeRandom()
+	} else if mesg == "normal" {
+		p.SetModeNormal()
+	} else if mesg == "pause" {
+		p.Pause()
+	} else if mesg == "resume" {
+		p.Resume()
+	}
+}
 
-	flag.Parse()
-
+func (p *Player) Run() {
+	sigChan := make(chan os.Signal)
+	fifoChan := make(chan string)
+	busChan := make(chan *gst.Message)
+	
 	signal.Notify(sigChan, syscall.SIGTERM)
 	signal.Notify(sigChan, syscall.SIGINT)
 	
-	rand.Seed(int64(time.Now().Nanosecond()))
-	p := new(Player)
+	go listenFifo(p, fifoChan)
+	go listenBus(p, busChan)
+	
+	for {
+		select {
+		case _ = <- sigChan:
+			p.Exit()
+		case mesg := <- fifoChan:
+			doFunction(p, mesg)
+		case mesg := <- busChan:
+			t := mesg.GetType()
+			if t == gst.MESSAGE_EOS || t == gst.MESSAGE_ERROR {
+				p.PlayNext()
+			}
+		}
+	}
+}
 
+func (p *Player) populateTmp() {
+	var f *os.File
+	_, err := os.Stat(p.tmpDir)
+	if err == nil { /* File exits? */
+		fmt.Println("tmp dir:", p.tmpDir, "exists.")
+		os.Exit(1)
+	}
+	
+	/* Just hope there are no errors. */
+	os.Mkdir(p.tmpDir, 0700)
+	syscall.Mkfifo(p.tmpDir + SuffixIn, 0700)
+	
+	f, _ = os.Create(p.tmpDir + SuffixUpcoming)
+	f.Close()
+	f, _ = os.Create(p.tmpDir + SuffixPlaying)
+	f.Close()
+}
+
+func (p *Player) initGst(nsink string) {
 	p.snd = gst.ElementFactoryMake("playbin", "mmusic")
 	if p.snd == nil {
 		fmt.Println("Failed to initialize gst: snd")
 		os.Exit(1)
 	}
 	
-	sink := gst.ElementFactoryMake(*nsink, "Sink")
+	sink := gst.ElementFactoryMake(nsink, "Sink")
 	if sink == nil {
-		fmt.Println("Failed to initilize gst: ", *nsink)
+		fmt.Println("Failed to initilize gst: ", nsink)
 		os.Exit(1)
 	}
 	p.snd.Link(sink)
@@ -451,23 +400,28 @@ func main () {
 		os.Exit(1)
 	}
 	
+	p.snd.SetProperty("volume", 1.0)
+}
+
+func main () {
+	rand.Seed(int64(time.Now().Nanosecond()))
+	defaultTmp := fmt.Sprintf("%s/mmusic-%d", os.TempDir(), os.Getuid())
+	
+	tmpDir	:= flag.String("t", defaultTmp, "Set tmp directory.")
+	nsink	:= flag.String("l", "alsasink", "Change gstreamer sink.")
+	random	:= flag.Bool("r", true, "Set starting randomness.")
+
+	flag.Parse()
+	
+	p := new(Player)
 	p.tmpDir = *tmpDir
-	p.volume = float64(*volume) / 100
-	p.random = *random
-	p.lock = new(sync.Mutex)
 	p.songs = new(Song)
-	
-	populateTmp(p.tmpDir)
-	
-	file, err := os.Create(p.tmpDir + SuffixPlaylist)
-	if err != nil {
-		panic(err)
+	p.initGst(*nsink)
+	p.populateTmp()
+	if *random {
+		p.SetModeRandom()
 	}
-	
-	if *readstdin {
-		p.songs.Next = scan(os.Stdin)
-	}
-	
+
 	for _, name := range flag.Args() {
 		f, err := os.Open(name)
 		if err != nil {
@@ -494,22 +448,6 @@ func main () {
 	
 	playlist.Close()
 
-	updateVolume(p)
-	if p.random {
-		file, err = os.Create(p.tmpDir + SuffixIsRandom)
-		if err == nil {
-			file.Close()
-		}
-		
-	}
-	
-	playNext(p)
-	
-	go listenFifo(p)
-	go listenBus(p)
-	
-	/* Wait for SIGTERM/INT signal */
-	_ = <-sigChan
-	os.RemoveAll(p.tmpDir)
-	os.Exit(0)
+	p.PlayNext()
+	p.Run()
 }
